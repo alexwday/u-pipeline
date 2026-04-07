@@ -31,7 +31,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = PROJECT_ROOT / ".venv"
-PHASE2_SCRIPT = PROJECT_ROOT / "scripts" / "setup_phase2.py"
+PHASE2_MODULE = "scripts.setup_phase2"
 
 SUBPROJECTS = ["u-ingestion", "u-retriever", "u-debug"]
 ENV_SUBPROJECTS = ["u-ingestion", "u-retriever"]
@@ -253,8 +253,11 @@ def main() -> None:
     _edit_all_env_files(env_files)
 
     print("\nRe-launching inside venv for phase 2...")
+    # Launch via `-m` so PROJECT_ROOT is on sys.path and phase 2
+    # can `from scripts import seed_data`. Running the file path
+    # directly would put scripts/ (not PROJECT_ROOT) on sys.path[0].
     result = subprocess.run(
-        [str(_venv_python()), str(PHASE2_SCRIPT)],
+        [str(_venv_python()), "-m", PHASE2_MODULE],
         cwd=str(PROJECT_ROOT),
         env=_venv_env(),
         check=False,
