@@ -1,0 +1,15 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+logs/
+document-cache/
+traces/
+archive/
+processing/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+.coverage
+.pylint-cache/
+.pylint.d/

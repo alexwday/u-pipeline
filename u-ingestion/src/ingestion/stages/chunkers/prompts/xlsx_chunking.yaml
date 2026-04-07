@@ -1,0 +1,143 @@
+stage: chunking
+version: "2.0"
+description: >
+  Identify row breakpoints, sheet-level passthrough rows, and
+  section-level passthrough rows in XLSX sheet data for splitting
+  into embedding-safe chunks.
+
+system_prompt: >
+  You are a spreadsheet chunking agent. Identify natural row
+  breakpoints and two tiers of passthrough context rows in
+  worksheet data.
+
+
+  A breakpoint is a row number where a new chunk should BEGIN.
+
+
+  Sheet passthrough rows contain context needed by EVERY chunk
+  in the sheet permanently — column headers, table titles, unit
+  labels, footnote definitions. These rows appear in all chunks.
+
+
+  Section passthrough rows contain context needed by the NEXT
+  chunk only — section headers, category labels that apply until
+  replaced by a new section. These rows carry forward one chunk
+  at a time; the next batch can re-flag them to continue
+  propagation.
+
+
+  A row can be both a breakpoint and a sheet passthrough, or
+  both a breakpoint and a section passthrough.
+
+
+  Always use the provided tool.
+
+user_prompt: >
+  Review the worksheet data below and identify breakpoint rows,
+  sheet passthrough rows, and section passthrough rows.
+
+
+  Breakpoint rows are row numbers where data should be split
+  into a new chunk.
+
+
+  Sheet passthrough rows provide permanent context needed by
+  every chunk — column headers, table titles, unit definitions,
+  footnote rows.
+
+
+  Section passthrough rows provide temporary context — section
+  headers or category labels that apply until a new section
+  begins. They propagate one chunk at a time. If a section
+  header still applies, re-flag it in the next batch.
+
+
+  Each chunk will be embedded independently for semantic search.
+  Target token limit per chunk: {embedding_limit}
+
+
+  {batch_content}
+
+
+  Rules:
+
+  1. Place breakpoints at section boundaries or category changes
+     to keep related data grouped within a single chunk.
+
+  2. Mark rows as sheet passthrough only when they provide
+     context needed to interpret EVERY chunk in the sheet —
+     column headers, table titles, unit labels, footnotes.
+
+  3. Mark rows as section passthrough when they provide context
+     for the current section but not the entire sheet — section
+     headers, category labels that apply until replaced.
+
+  4. A row can be both a breakpoint and a sheet passthrough, or
+     a breakpoint and a section passthrough — use this when a
+     header starts a new chunk and also provides context.
+
+  5. Aim for chunks near the target token limit, because
+     undersized chunks lose context and oversized chunks degrade
+     search quality.
+
+  6. Return empty arrays when no good breakpoints, sheet
+     passthrough, or section passthrough rows exist in the
+     current batch.
+
+  Examples:
+  - A column header row needed by every chunk -> include that row
+    in sheet_passthrough_rows.
+  - A business-line heading that applies until the next heading ->
+    include that row in section_passthrough_rows.
+  - A new subsection begins at row 42 -> include 42 in breakpoints
+    when it starts a new chunk.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: identify_xlsx_breakpoints
+      description: >
+        Call this tool when worksheet rows have been reviewed and
+        you are ready to mark chunk boundaries and passthrough
+        context rows. It records the row numbers where new chunks
+        should begin, along with permanent sheet-level and
+        temporary section-level context rows. Returns three arrays:
+        breakpoints, sheet_passthrough_rows, and
+        section_passthrough_rows.
+      parameters:
+        type: object
+        properties:
+          breakpoints:
+            type: array
+            items:
+              type: integer
+            description: >
+              Row numbers where new chunks should begin. Return
+              empty array if no good breakpoints exist.
+          sheet_passthrough_rows:
+            type: array
+            items:
+              type: integer
+            description: >
+              Row numbers with context needed by EVERY chunk in
+              the sheet — column headers, table titles, units,
+              footnote definitions. These rows appear in all
+              chunks permanently. Return empty if none.
+          section_passthrough_rows:
+            type: array
+            items:
+              type: integer
+            description: >
+              Row numbers with context needed by the NEXT chunk
+              only — section headers, category labels that apply
+              until replaced by a new section. These rows carry
+              forward one chunk at a time and the next batch can
+              re-flag them to continue propagation. Return empty
+              if none.
+        required:
+          - breakpoints
+          - sheet_passthrough_rows
+          - section_passthrough_rows
+        additionalProperties: false

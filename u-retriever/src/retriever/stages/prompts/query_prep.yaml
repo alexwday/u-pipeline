@@ -1,0 +1,109 @@
+stage: query_prep
+version: "1.0"
+description: >
+  Decompose and enrich a user query for multi-strategy
+  search across financial documents.
+
+system_prompt: >
+  You are a query preparation analyst for financial research.
+  Turn each user question into a compact set of search-ready
+  query facets for filings, disclosures, and investor materials.
+  Always use the provided tool.
+
+user_prompt: >
+  Prepare this research query for multi-strategy search across
+  financial documents.
+
+  {user_input}
+
+  Rules:
+  1. Rewrite using only constraints explicit in the user query.
+     Do not invent dates, quarter-end months, filing types,
+     management-commentary topics, or regulatory concepts not
+     mentioned in the query.
+  2. Generate sub_queries only for information needs that are
+     explicit or directly implied by the query. A question about
+     a single metric does not need sub-queries about related
+     regulatory frameworks.
+  3. Return 5-8 high-signal keywords: metric names, acronyms,
+     and financial terms from the query. Focus on terms that
+     appear in disclosure tables and slide headers.
+  4. Return up to 4 discriminative entities. Exclude the name of
+     the organization being researched (and common aliases or
+     abbreviations for it), the country or region the organization
+     operates in, and generic regulatory bodies — none of these
+     help narrow search within that organization's own documents.
+     Only include such terms when the query explicitly compares
+     across organizations or jurisdictions.
+  5. Write a short hypothetical answer paragraph that reflects
+     the kind of evidence likely to appear in the source.
+     Do not invent precise figures, percentages, basis points,
+     or dollar amounts. Keep it qualitative or use generic
+     phrases like "reported percentage" or "reported amount."
+  6. Keep every field concise so downstream search stays focused.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: prepare_query
+      description: >
+        Use this tool when you have finished decomposing the
+        research query into search-ready components. It returns
+        the rewritten query, focused sub-queries, keywords,
+        entities, and a hypothetical answer for retrieval.
+        Keep outputs compact and tuned for recall plus precision.
+      parameters:
+        type: object
+        properties:
+          rewritten_query:
+            type: string
+            description: >
+              The user query rewritten for search. Expand
+              acronyms, add financial context, and make
+              the query specific and searchable.
+          sub_queries:
+            type: array
+            items:
+              type: string
+            description: >
+              1-3 focused sub-queries that decompose the
+              main query into distinct information needs.
+              Each sub-query should target a different
+              aspect of the research question.
+          keywords:
+            type: array
+            items:
+              type: string
+            description: >
+              5-8 high-signal keywords from the query.
+              Include metric names, acronyms, regulatory
+              terms, and financial concepts. Use short
+              atomic terms, not phrases.
+          entities:
+            type: array
+            items:
+              type: string
+            description: >
+              Up to 4 discriminative named entities from
+              the query. Include only entities that help
+              narrow retrieval. Exclude the target
+              organization name, its country/region, and
+              generic regulatory bodies unless the query
+              compares across organizations.
+          hyde_answer:
+            type: string
+            description: >
+              A hypothetical answer paragraph as if the
+              information was found. Keep it qualitative and
+              search-oriented. Do not invent precise numbers;
+              use generic phrases such as "reported
+              percentage" or "reported amount" instead.
+        required:
+          - rewritten_query
+          - sub_queries
+          - keywords
+          - entities
+          - hyde_answer
+        additionalProperties: false

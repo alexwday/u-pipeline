@@ -1,0 +1,91 @@
+stage: doc_summary
+version: "1.0"
+description: >
+  Generate a document-level executive summary and refine
+  keywords and entities from section summaries.
+
+system_prompt: >
+  You are a document summarization agent for financial and
+  corporate documents. Synthesize section summaries into a
+  cohesive document-level executive summary and distill the
+  most representative keywords and entities.
+  Always use the provided tool.
+
+user_prompt: >
+  Summarize the document below by synthesizing the section
+  summaries from the table of contents. Produce a
+  document-level executive summary and refine keywords and
+  entities across all sections.
+
+
+  {user_input}
+
+
+  Rules:
+
+  1. Synthesize the key findings and purpose from all
+     section summaries into a 3-6 sentence executive
+     summary.
+
+  2. The executive summary should be self-contained — a
+     reader should understand the document's value without
+     reading individual sections.
+
+  3. Distill keywords to the 15-20 most representative
+     document-wide terms, ordered by importance.
+
+  4. Deduplicate entities across sections, keeping only the
+     most significant named entities.
+
+  5. For regulatory and financial documents, highlight key
+     metrics, ratios, and compliance topics in the summary.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: summarize_document
+      description: >
+        Call this tool when you have synthesized all section
+        summaries into a document-level executive summary
+        and refined the keywords and entities. Returns the
+        executive summary, document-wide keywords, and
+        deduplicated entities.
+      parameters:
+        type: object
+        properties:
+          executive_summary:
+            type: string
+            description: >
+              3-6 sentence executive summary covering the
+              document's scope, key findings, and
+              significance. Written for someone who needs
+              to understand the document quickly.
+          keywords:
+            type: array
+            items:
+              type: string
+            description: >
+              15-20 document-level keywords distilled from
+              section keywords. Ordered by document-wide
+              importance. These represent the major themes
+              of the entire document.
+          entities:
+            type: array
+            items:
+              type: string
+            description: >
+              Document-level named entities aggregated and
+              deduplicated from section entities.
+          rationale:
+            type: string
+            description: >
+              Brief note on how the summary was composed.
+              Used for pipeline traceability.
+        required:
+          - executive_summary
+          - keywords
+          - entities
+          - rationale
+        additionalProperties: false

@@ -1,0 +1,88 @@
+stage: section_detection
+version: "1.0"
+description: >
+  Detect primary section boundaries from batched document
+  content. Uses TOC hints and heading patterns to identify
+  where major sections begin.
+
+system_prompt: >
+  You are a document structure analyst. Your task is to
+  identify section boundaries within the provided document
+  content. Sections are the major divisions of the document
+  such as chapters, numbered sections, or topic groups.
+  Always use the provided tool.
+
+user_prompt: >
+  Identify section boundaries in the document content
+  below. Each section marks a major division of the
+  document.
+
+
+  {user_input}
+
+
+  Rules:
+
+  1. Align detected sections with the table of contents
+     when one is available. Use TOC entries as the primary
+     guide for section boundaries.
+
+  2. Identify clear heading patterns, topic shifts, or
+     visual breaks that mark where a new section begins.
+
+  3. Each section should represent a cohesive unit of
+     content covering a single topic or theme.
+
+  4. Return page numbers exactly as they appear in the
+     content provided. Do not infer page numbers outside
+     the current batch.
+
+  5. Return an empty sections array if no clear section
+     boundaries exist in this batch.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: detect_sections
+      description: >
+        Call this tool when you have analyzed the document
+        content and identified section boundaries. Returns
+        the list of section start points found in the
+        current batch.
+      parameters:
+        type: object
+        properties:
+          sections:
+            type: array
+            items:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: >
+                    Section title as it appears in the
+                    content.
+                start_page:
+                  type: integer
+                  description: >
+                    Page number where this section begins.
+              required:
+                - title
+                - start_page
+              additionalProperties: false
+            description: >
+              Section boundaries found in the current
+              batch. Each entry marks where a new section
+              begins. Return empty array if no boundaries
+              exist.
+          rationale:
+            type: string
+            description: >
+              How section boundaries were identified.
+              Used for pipeline traceability.
+        required:
+          - sections
+          - rationale
+        additionalProperties: false

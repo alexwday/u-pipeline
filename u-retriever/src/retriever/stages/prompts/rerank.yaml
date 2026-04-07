@@ -1,0 +1,64 @@
+stage: rerank
+version: "1.1"
+description: >
+  Filter candidate chunks by relevance to the research
+  query, removing only clearly irrelevant results.
+
+system_prompt: >
+  You are a noise filter for financial research retrieval.
+  Remove only chunks that are clearly unrelated to the query.
+  When relevance is plausible or indirect, keep the chunk.
+  Always use the provided tool.
+
+user_prompt: >
+  Given this research query, review the candidate chunks
+  below and identify any that are clearly unrelated.
+
+  <query>{user_input}</query>
+
+  <candidates>
+  {candidates}
+  </candidates>
+
+  Rules:
+  1. Remove only chunks that are unquestionably unrelated to
+     the query topic. When uncertain, keep the chunk.
+  2. Keep chunks with indirect relevance: glossary terms used
+     in the query, contextual background, supporting tables,
+     and nearby sections that may contain related data.
+  3. Candidates are grouped by section. Use the section summary
+     to understand context before judging individual chunks
+     within that section.
+  4. Do not remove chunks just because a stronger candidate
+     already covers the same topic. Multiple perspectives
+     and corroborating evidence are valuable.
+  5. Return an empty array if all chunks are potentially
+     relevant. Most candidates from a well-tuned search
+     should be kept.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: filter_chunks
+      description: >
+        Use this tool when you have reviewed all candidate
+        chunks for relevance to the research query. It returns
+        only the indices of clearly unrelated chunks. Keep
+        anything with plausible relevance. An empty array
+        (keep all) is a valid and common outcome.
+      parameters:
+        type: object
+        properties:
+          remove_indices:
+            type: array
+            items:
+              type: integer
+            description: >
+              Indices of candidates to remove. Only include
+              chunks that are clearly irrelevant. Return
+              empty array to keep all candidates.
+        required:
+          - remove_indices
+        additionalProperties: false

@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retriever"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "openai",
+    "requests",
+    "psycopg2-binary",
+    "pgvector",
+    "python-dotenv",
+    "pyyaml",
+    "tiktoken",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["retriever*"]
+
+[tool.black]
+line-length = 79
+target-version = ["py313"]
+
+[tool.pylint.main]
+source-roots = ["src", "tests"]
+
+[tool.pylint."messages_control"]
+disable = ["R0801"]
+
+[tool.pylint.design]
+max-attributes = 16
+max-args = 7
+max-positional-arguments = 7
+max-locals = 20
+max-returns = 7
+max-statements = 60
+
+[tool.pylint.format]
+max-module-lines = 1800
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pylint",
+    "black",
+    "flake8",
+]

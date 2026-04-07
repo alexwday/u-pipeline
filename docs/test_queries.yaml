@@ -1,0 +1,215 @@
+test_cases:
+  - name: "RBC CET1 ratio"
+    query: "What is RBC's CET1 ratio for Q1 2026?"
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources: null
+    assertions:
+      response_includes:
+        - "13.7%"
+        - "pillar3"
+      response_includes_any:
+        - ["page 3", "KM1"]
+      min_key_findings: 1
+      max_data_gaps: 0
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0
+
+  - name: "RBC capital adequacy - pillar3 + slides"
+    query: >
+      Describe RBC's capital adequacy position including
+      CET1, Tier 1, and Total Capital ratios.
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - investor-slides
+      - pillar3
+    assertions:
+      response_includes:
+        - "100,415"
+        - "13.7%"
+        - "15.2%"
+        - "16.8%"
+        - "734,693"
+        - "pillar3"
+        - "investor-slides"
+      min_key_findings: 3
+      max_data_gaps: 1
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0
+
+  - name: "RBC credit risk from RTS"
+    query: "What are RBC's key credit risk exposures and provisions for Q1 2026?"
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - rts
+    assertions:
+      response_includes:
+        - "1,090"
+        - "7,767"
+        - "9,167"
+        - "rts"
+      response_includes_any:
+        - ["page 24", "page 63"]
+        - ["page 9", "page 25", "page 26", "page 27"]
+      min_key_findings: 3
+      max_data_gaps: 0
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0
+
+  - name: "RBC NII and NIM trends"
+    query: >
+      What is RBC's net interest income and net interest margin
+      for Q1 2026? How do they compare to prior quarters?
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - investor-slides
+    assertions:
+      response_includes:
+        - "8,585"
+        - "1.55%"
+        - "investor-slides"
+        - "page 22"
+      response_includes_any:
+        - ["8,645", "8.65"]
+        - ["1.62%", "down 7 bps", "(7) bps"]
+        - ["page 8", "page 10"]
+      min_key_findings: 3
+      max_data_gaps: 0
+      max_citation_warnings: 0
+      max_rerank_fallbacks: 0
+
+  - name: "RBC TLAC and leverage"
+    query: "What is RBC's TLAC ratio and leverage ratio?"
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - pillar3
+      - rts
+    assertions:
+      response_includes:
+        - "30.9%"
+        - "4.4%"
+        - "pillar3"
+        - "rts"
+      response_includes_any:
+        - ["page 38", "page 69"]
+      min_key_findings: 2
+      max_data_gaps: 0
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0
+
+  - name: "RBC earnings, capital composition, and credit losses"
+    query: >
+      Explain RBC's Q1 2026 earnings strength, capital composition,
+      and credit losses. Include PPPT, CET1 capital or retained earnings,
+      and PCL on performing versus impaired loans.
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources: null
+    assertions:
+      response_includes:
+        - "investor-slides"
+        - "pillar3"
+        - "rts"
+      response_includes_any:
+        - ["8,497", "8.5"]
+        - ["100,415", "99,023"]
+        - ["1,068", "performing loans"]
+      min_key_findings: 4
+      max_data_gaps: 2
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0
+
+  - name: "RBC CR6 uninsured mortgages PD bucket"
+    query: >
+      In RBC's Pillar 3 CR6 A-IRB table, what were the EAD post-CCF,
+      RWA, and expected loss for uninsured mortgages in the
+      0.00 to <0.15 PD range as at January 31, 2026?
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - pillar3
+    assertions:
+      response_includes:
+        - "pillar3"
+        - "page 24"
+      response_includes_any:
+        - ["342,856", "342856"]
+        - ["21,305", "21305"]
+        - ["95"]
+      min_key_findings: 1
+      max_data_gaps: 0
+      max_citation_warnings: 0
+      max_rerank_fallbacks: 0
+
+  - name: "RBC impaired PCL trend"
+    query: >
+      How has RBC's PCL on impaired loans trended from Q1 2025
+      through Q1 2026, and which segment drove the Q1 2026 increase?
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - investor-slides
+    assertions:
+      response_includes:
+        - "1,068"
+        - "984"
+        - "985"
+        - "Capital Markets"
+        - "investor-slides"
+        - "page 19"
+      response_includes_any:
+        - ["245", "130"]
+      min_key_findings: 3
+      max_data_gaps: 0
+      max_citation_warnings: 0
+      max_rerank_fallbacks: 0
+
+  - name: "RBC PCL on impaired loans precise"
+    query: "What was RBC's PCL on impaired loans in Q1 2026?"
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources:
+      - rts
+    assertions:
+      response_includes:
+        - "1,068"
+        - "rts"
+        - "page 9"
+      min_key_findings: 1
+      max_data_gaps: 0
+      max_citation_warnings: 0
+      max_rerank_fallbacks: 0
+
+  - name: "RBC Q1 2026 financial performance summary"
+    query: >
+      Summarize RBC's Q1 2026 financial performance across earnings,
+      margins, capital, and credit quality.
+    combos:
+      - bank: RBC
+        period: "2026_Q1"
+    sources: null
+    assertions:
+      response_includes:
+        - "5,785"
+        - "13.7%"
+        - "1,090"
+      response_includes_any:
+        - ["1.55%", "1.33%"]
+        - ["4.4%", "30.9%", "734,693"]
+      min_key_findings: 4
+      max_data_gaps: 1
+      max_citation_warnings: 1
+      max_rerank_fallbacks: 0

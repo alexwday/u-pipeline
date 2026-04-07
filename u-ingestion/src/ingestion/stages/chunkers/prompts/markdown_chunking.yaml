@@ -1,0 +1,65 @@
+stage: chunking
+version: "1.0"
+description: >
+  Identify semantic breakpoints in markdown content for chunk splitting.
+
+system_prompt: >
+  You are a document chunking agent. Identify natural semantic
+  breakpoints in numbered markdown lines. A breakpoint is a line
+  number where a new chunk should BEGIN. Choose breakpoints at
+  topic transitions, section boundaries, or natural content
+  divisions. Always use the provided tool.
+
+user_prompt: >
+  Review the numbered lines below and identify breakpoint line
+  numbers where the content should be split into separate chunks
+  for embedding search.
+
+  Each chunk will be embedded independently for semantic search.
+  Target token limit per chunk: {embedding_limit}
+
+  {batch_content}
+
+  Rules:
+  1. Place breakpoints at topic transitions, section boundaries,
+     or natural content divisions to keep each chunk topically
+     coherent.
+  2. Keep tables, lists, and paragraphs intact — place breakpoints
+     before or after these structures, not in the middle.
+  3. Aim for chunks near the target token limit, because undersized
+     chunks lose context and oversized chunks degrade search quality.
+  4. Return an empty list when no good breakpoints exist in this
+     batch.
+
+  Examples:
+  - A new section heading begins at line 18 -> return 18 as a
+    breakpoint when it starts a new topic.
+  - A table spans lines 22 to 30 -> do not place a breakpoint
+    inside the table body.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: identify_breakpoints
+      description: >
+        Call this tool when a numbered markdown batch contains a
+        natural place for a new chunk to begin. It records the
+        line numbers where new chunks should start, with each
+        breakpoint marking the first line of a new chunk.
+        Returns an array of line numbers, or an empty array if
+        no good breakpoints exist.
+      parameters:
+        type: object
+        properties:
+          breakpoints:
+            type: array
+            items:
+              type: integer
+            description: >
+              Line numbers where new chunks should begin. Return
+              an empty array if no good breakpoints exist.
+        required:
+          - breakpoints
+        additionalProperties: false

@@ -1,0 +1,90 @@
+# ─── Metadata ───────────────────────────────────────────────
+stage: extraction
+version: "2.0"
+description: >
+  Convert a rendered PDF page image into structured markdown,
+  preserving all visible content, layout, tables, and visual elements.
+
+# ─── System Prompt ──────────────────────────────────────────
+system_prompt: >
+  You are a document digitization agent for PDF pages.
+  Convert rendered page images into structured, LLM-friendly
+  markdown that faithfully represents all visible content.
+  Always use the provided tool.
+
+# ─── User Prompt ────────────────────────────────────────────
+user_prompt: >
+  Convert the PDF page image into structured markdown that
+  captures every visible element on the page.
+
+  <format_guide>
+  Apply consistent markdown formatting for each content type:
+
+  - Headings: use # levels matching the document hierarchy.
+  - Body text: plain paragraphs preserving original structure.
+  - Tables: markdown table syntax with headers and alignment.
+    Reproduce every row and column faithfully.
+  - Lists: numbered or bulleted lists matching the original.
+  - Footnotes: place at the bottom with reference markers preserved.
+  - Charts and graphs: describe in a blockquote prefixed with
+    "> [Chart]:" followed by chart type, axis labels, data series,
+    key values, and visible trends.
+  - Images and diagrams: describe in a blockquote prefixed with
+    "> [Figure]:" followed by a detailed description of the visual
+    content, labels, annotations, and any embedded text.
+  - Page headers/footers: include all header and footer content
+    such as page numbers, dates, section titles, and branding.
+  </format_guide>
+
+  Rules:
+  1. Capture every piece of content visible on the page — text,
+     numbers, table data, labels, captions, and footnotes.
+  2. Reproduce tables faithfully with correct column headers,
+     row data, and alignment using markdown table syntax.
+  3. Describe charts, graphs, and visual elements in detail
+     including data values, axis labels, trends, and legends.
+  4. Preserve the reading order and document hierarchy of the
+     original page layout.
+
+  Examples:
+  - A page with a titled financial table and footnote marker ->
+    return the heading, markdown table, and footnote text in
+    reading order.
+  - A page with a line chart and callout annotations -> return
+    the surrounding text plus a > [Chart]: block that captures
+    axes, series, labels, and visible trends.
+
+# ─── Reasoning Effort ──────────────────────────────────────
+# recommended reasoning_effort: medium
+# Extraction requiring judgment on layout, table structure,
+# and visual element interpretation.
+
+# ─── Tool Choice ────────────────────────────────────────────
+tool_choice: required
+
+# ─── Tool Definitions ──────────────────────────────────────
+tools:
+  - type: function
+    function:
+      name: extract_page_content
+      description: >
+        Call this tool when the PDF page image has been fully
+        reviewed and you are ready to return the final markdown
+        extraction. It captures all visible content — text,
+        tables, charts, images, and structural elements — in a
+        standardized markdown format. Returns the complete page
+        as a single markdown string with headings, tables, and
+        blockquote descriptions for visual elements.
+      parameters:
+        type: object
+        properties:
+          content:
+            type: string
+            description: >
+              Full page content converted to structured markdown.
+              Includes headings, paragraphs, tables in markdown
+              syntax, footnotes, and blockquote descriptions for
+              visual elements such as charts and images.
+        required:
+          - content
+        additionalProperties: false

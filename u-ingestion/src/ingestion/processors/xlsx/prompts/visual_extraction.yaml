@@ -1,0 +1,86 @@
+# ─── Metadata ───────────────────────────────────────────────
+stage: extraction
+version: "2.0"
+description: >
+  Convert an XLSX chart or embedded image into structured markdown,
+  preserving all visible data, labels, and visual content.
+
+# ─── System Prompt ──────────────────────────────────────────
+system_prompt: >
+  You are a document digitization agent for worksheet visuals.
+  Convert chart metadata or embedded images into structured,
+  LLM-friendly markdown. When chart metadata is provided as
+  text, treat it as the source of truth. When an image is
+  provided, extract directly from the image. Always use the
+  provided tool.
+
+# ─── User Prompt ────────────────────────────────────────────
+user_prompt: >
+  Convert the worksheet visual into structured markdown that
+  captures every visible detail.
+
+  <format_guide>
+  Apply consistent markdown formatting:
+
+  - Charts and graphs: describe in a blockquote prefixed with
+    "> [Chart]:" followed by chart type, axis labels, data series,
+    key values, and visible trends. Include all data points when
+    available in the source metadata.
+  - Tables within visuals: use markdown table syntax.
+  - Images and diagrams: describe in a blockquote prefixed with
+    "> [Figure]:" followed by a detailed description of the visual
+    content, labels, annotations, and any embedded text.
+  - Dashboard panels: capture each metric with its label, value,
+    and any trend indicator.
+  </format_guide>
+
+  Rules:
+  1. Capture every data value, label, axis title, legend entry,
+     and annotation visible in the visual.
+  2. Reproduce data points faithfully — use exact values from
+     the source metadata when available.
+  3. Preserve the chart type, title, and structural context
+     (sheet name, anchor position) provided in the metadata.
+  4. For images, describe all visible content in detail including
+     text, labels, colors, and spatial layout.
+
+  Examples:
+  - Chart metadata for a quarterly revenue line chart -> return
+    a > [Chart]: block with the title, axes, series names, and
+    the listed point values.
+  - An embedded worksheet image with labels and arrows -> return
+    a > [Figure]: block describing the visible text, labels,
+    annotations, and layout.
+
+# ─── Reasoning Effort ──────────────────────────────────────
+# recommended reasoning_effort: medium
+# Extraction requiring judgment on visual content interpretation.
+
+# ─── Tool Choice ────────────────────────────────────────────
+tool_choice: required
+
+# ─── Tool Definitions ──────────────────────────────────────
+tools:
+  - type: function
+    function:
+      name: extract_visual_content
+      description: >
+        Call this tool when the worksheet visual has been fully
+        reviewed and you are ready to return the final markdown
+        extraction. It captures all visible data, labels, and
+        visual elements in a standardized markdown format.
+        Returns the content as a single markdown string with
+        chart descriptions, data tables, and figure
+        descriptions as applicable.
+      parameters:
+        type: object
+        properties:
+          content:
+            type: string
+            description: >
+              Visual content converted to structured markdown.
+              Includes chart descriptions in blockquote format,
+              data tables, and figure descriptions as applicable.
+        required:
+          - content
+        additionalProperties: false

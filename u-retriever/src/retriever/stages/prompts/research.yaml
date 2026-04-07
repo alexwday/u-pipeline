@@ -1,0 +1,204 @@
+stage: research
+version: "2.0"
+description: >
+  Analyze document content and produce structured research
+  findings with precise page locations for a query.
+
+system_prompt: >
+  You are a financial research analyst for cited document QA.
+  Extract discrete facts from the provided document evidence,
+  each with its source page and location. Always use the
+  provided tool.
+
+user_prompt: >
+  Answer the following research query using only the document
+  content provided.
+
+  <query>{query}</query>
+
+  <document_context>
+  Source: {source_label}
+  Bank: {bank}, Period: {period}
+  </document_context>
+
+  {previous_research}
+
+  <content>
+  {chunks}
+  </content>
+
+  Rules:
+  1. Extract one discrete fact per finding. Never bundle multiple
+     metrics or statements into a single finding.
+  2. This stage analyzes one source at a time. It is acceptable
+     for the current source to answer only part of the overall
+     query if that is all the source supports.
+  3. For each finding, set page to the Citation Page value from
+     the chunk header. Set location_detail to the section name,
+     sheet name, or other identifying context from the header.
+  4. Include specific figures, ratios, and changes when they
+     materially answer the question. Copy numeric values exactly
+     from the provided chunks.
+  5. For quantitative findings, populate the optional metric
+     fields:
+     - metric_name: the metric label verbatim from the source
+       (do not normalize or rename)
+     - metric_value: the exact value as stated in the source
+     - period: the period the data belongs to, which may differ
+       from the document period (a Q1 2026 document may cite
+       Q4 2025 comparative data)
+     - segment: "Enterprise" for bank-wide or total figures,
+       the platform or business unit name when identifiable
+       (e.g. "Capital Markets", "Wealth Management"), or
+       "Unconfirmed" when the segment is unclear
+  6. For qualitative findings (trends, commentary, descriptions),
+     set metric_name, metric_value, period, and segment to
+     empty string "".
+  7. If the query asks for multiple areas, cover each area with
+     its own finding(s).
+  8. When a metric has year-over-year or quarter-over-quarter
+     comparisons available in the chunks, extract the comparative
+     values as separate findings with their respective periods.
+     Users expect to see trends and deltas alongside current values.
+  9. When segment-level breakdowns are available for a requested
+     metric (e.g., by business line, geography, or product),
+     extract key segment figures as individual findings.
+  10. When the chunks contain management commentary, outlook, or
+      guidance relevant to the query topic, extract it as a
+      qualitative finding.
+  11. If the query asks for exposures and provisions, include at
+      least one exposure finding and one provision, ACL, or loss
+      finding when the chunks contain both.
+  12. For provision, ACL, or allowance questions, prefer the direct
+      allowance for credit losses or provision for credit losses
+      tables over summary commentary when both are available.
+  13. For credit-risk exposure queries, prefer direct exposure
+      tables over general balance-sheet totals.
+  14. Prefer chunks whose section title directly matches the metric
+      being answered over generic highlights or overview sections.
+  15. Avoid repeating the same metric from multiple chunks unless
+      the duplication adds reconciliation or source context.
+  16. If the current source does not contain data for some topics
+      in the query, that is acceptable — return findings for the
+      topics it does cover. But for topics the source DOES cover,
+      extract exhaustively: every relevant value, comparison, and
+      breakdown present in the chunks.
+  17. Use additional_queries only for specific missing facts that
+      would materially improve the answer.
+  18. Set additional_queries to an empty array when the answer is
+      materially complete or further search is unlikely to help.
+  19. Set confidence based on answer completeness: above 0.8 means
+      well answered, below 0.5 means significant gaps remain.
+
+  Reminder — the query you must fully answer:
+  <query>{query}</query>
+
+  Before finalizing your findings, verify:
+  - Have you extracted at least one finding for every metric
+    or topic the query asks about?
+  - For each quantitative metric, did you also extract
+    comparative values (prior quarters, YoY) if they appear
+    in the chunks?
+  - If the query mentions dollar amounts, ratios, or absolute
+    figures, did you extract both forms when available?
+  - Did you check that period values match the query's
+    requested date (not a prior-period column in the same table)?
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: produce_research
+      description: >
+        Use this tool when you have analyzed the provided
+        document evidence for the research query. Return one
+        finding per discrete fact, each with its source page
+        and location. Include optional metric fields for
+        quantitative findings. Ask follow-up queries only
+        when a material gap remains.
+      parameters:
+        type: object
+        properties:
+          findings:
+            type: array
+            items:
+              type: object
+              properties:
+                finding:
+                  type: string
+                  description: >
+                    One discrete factual statement extracted
+                    from the document content. Copy exact
+                    numeric values from the chunks.
+                page:
+                  type: integer
+                  description: >
+                    The Citation Page number from the chunk
+                    header where this fact appears.
+                location_detail:
+                  type: string
+                  description: >
+                    Section name, sheet name, or other
+                    identifying context from the chunk header.
+                metric_name:
+                  type: string
+                  description: >
+                    Metric label verbatim from the source
+                    document. Use empty string "" for
+                    qualitative findings.
+                metric_value:
+                  type: string
+                  description: >
+                    Exact value as stated in the source.
+                    Use empty string "" for qualitative
+                    findings.
+                period:
+                  type: string
+                  description: >
+                    The period the data belongs to (e.g.
+                    "Q1 2026", "FY 2025"). May differ from
+                    the document period. Use empty string ""
+                    for qualitative findings.
+                segment:
+                  type: string
+                  description: >
+                    "Enterprise" for bank-wide totals, business
+                    unit name when identifiable, or
+                    "Unconfirmed" when unclear. Use empty
+                    string "" for qualitative findings.
+              required:
+                - finding
+                - page
+                - location_detail
+                - metric_name
+                - metric_value
+                - period
+                - segment
+              additionalProperties: false
+            description: >
+              Array of structured findings, one per discrete
+              fact. Each finding must have its source page
+              and location. Quantitative findings should also
+              include metric_name, metric_value, period, and
+              segment when available.
+          additional_queries:
+            type: array
+            items:
+              type: string
+            description: >
+              Follow-up search queries to find missing
+              information. Return empty array when the
+              content sufficiently answers the query or
+              no further search would help.
+          confidence:
+            type: number
+            description: >
+              How completely the query is answered by the
+              current findings, from 0.0 (no relevant info)
+              to 1.0 (fully answered).
+        required:
+          - findings
+          - additional_queries
+          - confidence
+        additionalProperties: false

@@ -1,0 +1,88 @@
+stage: subsection_detection
+version: "1.0"
+description: >
+  Detect subsection boundaries within a single large
+  section. Identifies finer-grained divisions inside a
+  primary section that exceeds the token threshold.
+
+system_prompt: >
+  You are a document structure analyst. Your task is to
+  identify subsection boundaries within a single section
+  of a document. Subsections are the finer divisions
+  within a major section. Always use the provided tool.
+
+user_prompt: >
+  Identify subsection boundaries within the section
+  described below. Subsections are smaller divisions
+  inside this single section.
+
+
+  {user_input}
+
+
+  Rules:
+
+  1. Only identify subsections within the provided
+     section. Do not create boundaries that span outside
+     the given page range.
+
+  2. Identify clear heading patterns, topic shifts, or
+     visual breaks that mark subsection boundaries within
+     this section.
+
+  3. Each subsection should represent a cohesive unit of
+     content within the parent section.
+
+  4. Return page numbers exactly as they appear in the
+     content provided.
+
+  5. Return an empty subsections array if no clear
+     subsection boundaries exist in this section.
+
+tool_choice: required
+
+tools:
+  - type: function
+    function:
+      name: detect_subsections
+      description: >
+        Call this tool when you have analyzed the section
+        content and identified subsection boundaries.
+        Returns the list of subsection start points found
+        within the section.
+      parameters:
+        type: object
+        properties:
+          subsections:
+            type: array
+            items:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: >
+                    Subsection title as it appears in the
+                    content.
+                start_page:
+                  type: integer
+                  description: >
+                    Page number where this subsection
+                    begins.
+              required:
+                - title
+                - start_page
+              additionalProperties: false
+            description: >
+              Subsection boundaries found within the
+              section. Each entry marks where a new
+              subsection begins. Return empty array if no
+              boundaries exist.
+          rationale:
+            type: string
+            description: >
+              How subsection boundaries were identified.
+              Used for pipeline traceability.
+        required:
+          - subsections
+          - rationale
+        additionalProperties: false

@@ -1,0 +1,95 @@
+# ─── Metadata ───────────────────────────────────────────────
+stage: extraction
+version: "2.0"
+description: >
+  Convert a rendered PPTX slide image into structured markdown,
+  preserving all visible content, layout, tables, and visual elements.
+
+# ─── System Prompt ──────────────────────────────────────────
+system_prompt: >
+  You are a document digitization agent for presentation slides.
+  Convert rendered slide images into structured, LLM-friendly
+  markdown that faithfully represents all visible content.
+  Always use the provided tool.
+
+# ─── User Prompt ────────────────────────────────────────────
+user_prompt: >
+  Convert the presentation slide image into structured markdown
+  that captures every visible element on the slide.
+
+  <format_guide>
+  Apply consistent markdown formatting for each content type:
+
+  - Headings: use # levels matching the slide hierarchy
+    (slide title as H1, subtitles as H2).
+  - Body text: plain paragraphs preserving original structure.
+  - Tables: markdown table syntax with headers and alignment.
+    Reproduce every row and column faithfully.
+  - Lists: numbered or bulleted lists matching the original.
+  - Footnotes: place at the bottom with reference markers preserved.
+  - Charts and graphs: describe in a blockquote prefixed with
+    "> [Chart]:" followed by chart type, axis labels, data series,
+    key values, and visible trends.
+  - Images and diagrams: describe in a blockquote prefixed with
+    "> [Figure]:" followed by a detailed description of the visual
+    content, labels, annotations, and any embedded text.
+  - KPI panels and dashboards: capture each metric with its label,
+    value, and any trend indicator or comparison.
+  - Page headers/footers: include all header and footer content
+    such as page numbers, dates, section titles, and branding.
+  </format_guide>
+
+  Rules:
+  1. Capture every piece of content visible on the slide — text,
+     numbers, table data, labels, captions, and footnotes.
+  2. Reproduce tables faithfully with correct column headers,
+     row data, and alignment using markdown table syntax.
+  3. Describe charts, graphs, and visual elements in detail
+     including data values, axis labels, trends, and legends.
+  4. Preserve the reading order of the slide: title first, then
+     primary visual or table, then supporting text, then footer.
+  5. For dashboard or multi-panel slides, capture each panel
+     as its own section with the metric label and value.
+
+  Examples:
+  - A title slide with subtitle and logo -> return the slide
+    title, subtitle text, and a > [Figure]: block for the logo.
+  - A dashboard slide with KPI tiles and a bar chart -> return
+    separate KPI sections plus a > [Chart]: block describing
+    the chart axes, series, and trends.
+
+# ─── Reasoning Effort ──────────────────────────────────────
+# recommended reasoning_effort: medium
+# Extraction requiring judgment on layout, table structure,
+# and visual element interpretation.
+
+# ─── Tool Choice ────────────────────────────────────────────
+tool_choice: required
+
+# ─── Tool Definitions ──────────────────────────────────────
+tools:
+  - type: function
+    function:
+      name: extract_page_content
+      description: >
+        Call this tool when the presentation slide image has
+        been fully reviewed and you are ready to return the
+        final markdown extraction. It captures all visible
+        content — text, tables, charts, KPIs, images, and
+        structural elements — in a standardized markdown
+        format. Returns the complete slide as a single markdown
+        string with headings, tables, and blockquote
+        descriptions for visual elements.
+      parameters:
+        type: object
+        properties:
+          content:
+            type: string
+            description: >
+              Full slide content converted to structured markdown.
+              Includes headings, paragraphs, tables in markdown
+              syntax, footnotes, and blockquote descriptions for
+              visual elements such as charts and images.
+        required:
+          - content
+        additionalProperties: false
