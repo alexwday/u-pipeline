@@ -61,11 +61,21 @@ def _venv_python() -> Path:
     return VENV_DIR / "bin" / "python"
 
 
-def _venv_pip() -> Path:
-    """Return path to the venv pip executable. Returns: Path."""
-    if sys.platform == "win32":
-        return VENV_DIR / "Scripts" / "pip.exe"
-    return VENV_DIR / "bin" / "pip"
+def _venv_env() -> dict:
+    """Build a clean environment dict for venv subprocess calls.
+
+    Strips PYTHONHOME and PYTHONPATH so the venv interpreter does
+    not accidentally import modules (certifi, urllib3, ssl) from
+    the system Python that launched setup.py. This is the most
+    common cause of "SSL: CERTIFICATE_VERIFY_FAILED" during pip
+    install on machines whose system Python has a stale or
+    corporate-CA-customised certifi. Returns: dict.
+    """
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    env["VIRTUAL_ENV"] = str(VENV_DIR)
+    return env
 
 
 def _create_venv() -> None:
@@ -81,14 +91,42 @@ def _create_venv() -> None:
     print(f"Created {VENV_DIR}")
 
 
+def _pip_install(args: list[str], check: bool) -> int:
+    """Run `python -m pip install ...` in the venv with a clean env.
+
+    Always invokes pip via `python -m pip` (not the .venv/bin/pip
+    shebang script) so the venv interpreter is in charge of module
+    resolution from the very first import. Always passes a scrubbed
+    environment via _venv_env() to avoid leaking PYTHONPATH from the
+    system interpreter.
+
+    Params:
+        args: pip arguments after `install` (e.g. ["--upgrade", "pip"])
+        check: raise on non-zero exit if True
+
+    Returns:
+        process return code
+    """
+    py = str(_venv_python())
+    cmd = [py, "-m", "pip", "install"] + args
+    result = subprocess.run(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        env=_venv_env(),
+        check=check,
+    )
+    return result.returncode
+
+
 def _install_dependencies() -> None:
     """Install all subprojects in editable mode. Returns: None."""
-    pip = str(_venv_pip())
-    args = [pip, "install"]
+    print("Upgrading pip in venv...")
+    _pip_install(["--upgrade", "pip", "setuptools", "wheel"], check=True)
+    args: list[str] = []
     for sub in SUBPROJECTS:
         args.extend(["-e", f"./{sub}[dev]"])
     print("Installing subprojects...")
-    subprocess.run(args, cwd=str(PROJECT_ROOT), check=True)
+    _pip_install(args, check=True)
     print("Subprojects installed")
 
 
@@ -98,15 +136,10 @@ def _install_optional_packages() -> None:
     Failures are expected on non-work environments and only produce a
     warning — they never abort the setup. Returns: None.
     """
-    pip = str(_venv_pip())
     for package in OPTIONAL_PACKAGES:
         print(f"Attempting optional install: {package}")
-        result = subprocess.run(
-            [pip, "install", package],
-            cwd=str(PROJECT_ROOT),
-            check=False,
-        )
-        if result.returncode == 0:
+        rc = _pip_install([package], check=False)
+        if rc == 0:
             print(f"  {package}: installed")
         else:
             print(
@@ -219,6 +252,7 @@ def main() -> None:
     result = subprocess.run(
         [str(_venv_python()), str(PHASE2_SCRIPT)],
         cwd=str(PROJECT_ROOT),
+        env=_venv_env(),
         check=False,
     )
     sys.exit(result.returncode)
