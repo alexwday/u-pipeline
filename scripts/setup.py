@@ -174,7 +174,11 @@ def _editor_command(file_path: Path) -> list[str]:
     """Build the editor command for opening a file.
 
     Honours $VISUAL, then $EDITOR. Falls back to a sensible
-    platform-specific default.
+    platform-specific default. On macOS we intentionally do NOT
+    use `open -W` because it waits for the whole application to
+    quit (not just the document window), which hangs forever if
+    TextEdit has any other document open. The "Press Enter to
+    confirm" prompt in _edit_env_file handles the wait instead.
 
     Params:
         file_path: file to open
@@ -186,7 +190,7 @@ def _editor_command(file_path: Path) -> list[str]:
     if editor:
         return shlex.split(editor) + [str(file_path)]
     if sys.platform == "darwin":
-        return ["open", "-t", "-W", str(file_path)]
+        return ["open", "-t", str(file_path)]
     if sys.platform.startswith("linux"):
         return ["nano", str(file_path)]
     return ["notepad", str(file_path)]
