@@ -42,8 +42,33 @@ user_prompt: >
   5. For quantitative findings, populate the optional metric
      fields:
      - metric_name: the metric label verbatim from the source
-       (do not normalize or rename)
-     - metric_value: the exact value as stated in the source
+       (do not normalize or rename). Do NOT append a
+       parenthesized unit suffix — the unit goes in its own
+       field below.
+     - metric_value: the numeric value as stated in the
+       source, WITHOUT the unit (the unit goes in the
+       separate unit field below). For a cell showing
+       "13.7%", use metric_value "13.7" and unit "%". For a
+       bare "100415" in a dollars-in-millions sheet, use
+       metric_value "100,415" and unit "$MM".
+     - unit: the measurement unit for metric_value. Use
+       compact tokens: "$MM" for dollars in millions, "$B"
+       for dollars in billions, "%" for percentage ratios,
+       "bps" for basis points, "x" for dimensionless ratio
+       multiples (e.g. 1.47x coverage), "#" for counts. If
+       the unit appears in a table header, sheet title, or
+       column header rather than the data cell itself,
+       perform the header-lookup and populate this field.
+       Example: pillar 3 KM1 has "(Millions of Canadian
+       dollars)" at row 4 of the sheet applying to every
+       dollar-amount row; a CET1 capital cell of "100415"
+       therefore becomes metric_value "100,415" with unit
+       "$MM". A CRB_f_b sheet titled "Credit quality of
+       assets ($ in millions)"; a net write-offs cell of
+       "634" becomes metric_value "634" with unit "$MM".
+       Do NOT invent units not present in the chunk — if
+       the source has no scale indicator, leave unit
+       empty and let downstream stages handle it.
      - period: the period the data belongs to, which may differ
        from the document period (a Q1 2026 document may cite
        Q4 2025 comparative data)
@@ -52,8 +77,8 @@ user_prompt: >
        (e.g. "Capital Markets", "Wealth Management"), or
        "Unconfirmed" when the segment is unclear
   6. For qualitative findings (trends, commentary, descriptions),
-     set metric_name, metric_value, period, and segment to
-     empty string "".
+     set metric_name, metric_value, unit, period, and segment
+     to empty string "".
   7. If the query asks for multiple areas, cover each area with
      its own finding(s).
   8. When a metric has year-over-year or quarter-over-quarter
@@ -89,6 +114,158 @@ user_prompt: >
       materially complete or further search is unlikely to help.
   19. Set confidence based on answer completeness: above 0.8 means
       well answered, below 0.5 means significant gaps remain.
+  20. When the chunks contain a movement walk, waterfall,
+      component bridge, or decomposition (e.g., a CET1 ratio
+      movement, a PPPT-to-net-income bridge, a segment-sum
+      reconciliation, a bps contribution analysis), extract all
+      of the following together so downstream stages can
+      reconcile them:
+      - Each visible component (bar, line item) as an individual
+        quantitative finding with its own metric_name and
+        metric_value
+      - The stated endpoint values or totals (e.g., the opening
+        and closing balances, or "13.5%" and "13.7%") and any
+        stated headline change (e.g., "+20 bps QoQ") — each as
+        its own finding
+      - Any footnote, legend, or callout content on the same
+        page that explains the components: sub-composition of
+        an "Other" or residual bucket, rounding disclosures,
+        unspecified items, or source annotations. Extract these
+        as qualitative findings (empty metric fields) when they
+        are purely descriptive, or as quantitative findings when
+        they contain hard values (e.g., "Other includes reg
+        updates +5 bps, FVOCI +5 bps").
+      Worked example — a CET1 movement waterfall figure with
+      endpoints "Q4/2025 13.5%" and "Q1/2026 13.7%" and bars
+      labeled "79 bps" (Net Income), "(33) bps" (Dividends),
+      "(26) bps" (RWA Growth), "(13) bps" (Share Repurchases),
+      "8 bps" (Other), plus a dashed-box overlay labeling the
+      Net Income + Dividends combination as "+46 bps" (Net
+      internal capital generation). The required findings are:
+      (1) metric_name "CET1 movement — Net Income",
+      metric_value "79", unit "bps"; (2) metric_name "CET1
+      movement — Dividends", metric_value "-33", unit "bps";
+      (3) metric_name "CET1 movement — RWA Growth",
+      metric_value "-26", unit "bps"; (4) metric_name "CET1
+      movement — Share Repurchases", metric_value "-13",
+      unit "bps"; (5) metric_name "CET1 movement — Other",
+      metric_value "8", unit "bps"; plus the two endpoints
+      (13.5% and 13.7%) and the stated headline change
+      ("+20 bps QoQ"). The aggregated "+46 bps" Net internal
+      capital generation overlay is ALSO extracted as a
+      separate finding — it is a visible data point on the
+      figure. Parenthesized negatives like "(33) bps" are
+      standard accounting notation for negative values — emit
+      the negative sign in metric_value ("-33"). DO NOT
+      collapse the 5 component bars into the aggregated
+      overlay, and DO NOT skip extraction because the
+      components do not reconcile to the headline change
+      (that is by design — downstream stages use footnote
+      context to explain the gap).
+      The goal is that if the visible components do not sum to
+      the stated headline change, the downstream stage has the
+      footnote/callout context needed to explain the gap or
+      flag it as an inconsistency.
+  21. When a finding reports an allowance, provision, exposure,
+      balance, or any metric whose value depends on the
+      population scope — e.g. loans only vs. loans + securities;
+      on-balance vs. off-balance-sheet; drawn vs. EAD;
+      regulatory consolidation scope vs. financial-statement
+      scope; or an IFRS 9 stage grouping — include the scope
+      qualifier verbatim in the metric_name. Examples:
+      "Allowance for credit losses — loans and acceptances",
+      "Allowance for credit losses — loans + debt securities
+      + off-balance-sheet exposures",
+      "Exposures at default — drawn",
+      "Retained earnings — regulatory consolidation scope",
+      "Allowance (Stage 1 & 2) — all exposures". Do not rely
+      on the reader inferring scope from the finding prose,
+      the location_detail, or the sheet/section title alone.
+      Scope qualifiers in metric_name are what downstream
+      stages use to decide whether two values are directly
+      comparable.
+  22. A methodology footnote, glossary entry, or definition
+      block that only describes how a non-GAAP measure is
+      calculated is not itself a finding. Do not create a
+      finding whose metric_value is a formula, a
+      parenthesized component list (e.g. "Income (A) before
+      income taxes (B) and PCL (C)"), or a re-statement of a
+      non-GAAP definition. The primary value the definition
+      refers to (e.g. the headline PPPT number) is extracted
+      from its main presentation elsewhere, not from the
+      definition. This rule applies specifically when the
+      source text frames itself as a calculation explanation
+      ("X is calculated as …", "X is defined as …", "For
+      further information, refer to the Glossary / Key
+      performance and non-GAAP measures section"). Exception:
+      if the footnote additionally discloses a distinct
+      quantitative value that is NOT already the headline
+      measure and is NOT simply a calculation input (for
+      example, an adjustment reconciling item disclosed only
+      in the footnote), extract that distinct value as its
+      own finding with a clear metric_name. Do not extract
+      the calculation inputs themselves (the A, B, C
+      component values inside the parenthetical definition).
+      In addition, this prohibition extends to prose variants
+      of the same calculation-input pattern. The following
+      formulations are all prohibited and must NOT be
+      extracted as findings: (i) parenthetical form — "X is
+      calculated as measure_1 (value_1) operator measure_2
+      (value_2) ..."; (ii) prose form — "X is calculated as
+      A before B and C; for Q1 these inputs were A of $...,
+      B of $..., C of $..." or any rewording that recites
+      the component values inline as a sentence; (iii)
+      qualitative findings whose finding-text body recites
+      the calculation input values in narrative form, even
+      when metric_name and metric_value are left empty — a
+      qualitative finding is not a loophole for surfacing
+      component values that rule 22 forbids as quantitative
+      findings. Exception (rule 20): waterfall bars, bridge
+      steps, and decomposition line items remain extractable
+      per rule 20 — those are presentation of already-
+      disaggregated data and MUST be extracted per rule 20,
+      regardless of whether individual bar values appear
+      inside parentheses (e.g., "(33) bps" for a negative
+      CET1 movement component is standard accounting notation
+      for a negative number, not a parenthetical calculation
+      input).
+  23. When a slide, section, or commentary block has
+      multiple narrative bullets (including main bullets and
+      sub-bullets) that convey distinct factual statements,
+      extract each distinct statement as its own qualitative
+      finding. Do NOT summarize across bullets, paraphrase
+      them into a single synthesized finding, or pick one as
+      representative. A main bullet naming WHO / WHERE /
+      WHICH-SEGMENTS and a sub-bullet naming WHY /
+      HOW-CAUSED are distinct facts — both become separate
+      findings. Worked example — pattern recognition, not
+      source quotation. Suppose a slide carries a main bullet
+      of the form "We took <action> in <list of business
+      units>, partially offset by <opposite action> in
+      <specific division>" together with a sub-bullet of the
+      form "<metric> was driven by <cause_1> and <cause_2>,
+      partly offset by <cause_3>". These are TWO findings,
+      not one: (1) a qualitative finding whose finding field
+      quotes the main bullet verbatim — preserving every
+      proper noun, segment label, and division name exactly
+      as management wrote them; (2) a qualitative finding
+      whose finding field quotes the sub-bullet verbatim —
+      preserving the driver clauses in management's order.
+      Do NOT merge them into a synthesized "<metric> was
+      driven by X, partly offset by Y" finding that drops
+      the segment-specific content from the main bullet. Do
+      NOT rewrite the source language — preserve
+      management's own wording, including proper nouns for
+      specific divisions and segment names, because
+      downstream stages may cite them directly. The
+      placeholders <action>, <list of business units>,
+      <specific division>, <cause_1>, <cause_2>, <cause_3>
+      are pattern slots — at extraction time you fill them
+      from the actual slide text, you do not search for
+      slides that match the placeholders literally. Rule
+      applies to bullet structures, numbered lists, parallel
+      prose paragraphs in commentary sections, and callout
+      box bullets adjacent to figures.
 
   Reminder — the query you must fully answer:
   <query>{query}</query>
@@ -150,9 +327,35 @@ tools:
                 metric_value:
                   type: string
                   description: >
-                    Exact value as stated in the source.
-                    Use empty string "" for qualitative
-                    findings.
+                    The numeric value of the metric as
+                    stated in the source, WITHOUT the unit
+                    (the unit goes in the separate `unit`
+                    field). For a pillar 3 KM1 cell showing
+                    "100415" under a "(Millions of Canadian
+                    dollars)" header, use metric_value
+                    "100,415" and unit "$MM". For a cell
+                    showing "13.7%", use metric_value
+                    "13.7" and unit "%". Use empty string
+                    "" for qualitative findings.
+                unit:
+                  type: string
+                  description: >
+                    The measurement unit for metric_value
+                    as a compact token. Use "$MM" for
+                    dollars in millions, "$B" for dollars
+                    in billions, "%" for percentage ratios,
+                    "bps" for basis points, "x" for
+                    dimensionless ratio multiples (e.g.
+                    1.47x coverage ratio), "#" for counts.
+                    If the unit appears in a table header,
+                    sheet title, or column header rather
+                    than the data cell itself, perform the
+                    header-lookup and populate this field
+                    — the goal is that downstream stages
+                    can read this field without re-reading
+                    the source chunk. Use empty string ""
+                    for qualitative findings or when no
+                    unit context is present in the chunk.
                 period:
                   type: string
                   description: >
@@ -173,6 +376,7 @@ tools:
                 - location_detail
                 - metric_name
                 - metric_value
+                - unit
                 - period
                 - segment
               additionalProperties: false

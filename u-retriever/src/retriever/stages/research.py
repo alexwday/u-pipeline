@@ -298,6 +298,7 @@ def _parse_research_response(
         for optional_key in (
             "metric_name",
             "metric_value",
+            "unit",
             "period",
             "segment",
         ):

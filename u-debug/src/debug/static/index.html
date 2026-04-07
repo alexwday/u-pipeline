@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>U-Pipeline Debug Interface</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>U-Pipeline Debug Interface</h1>
+        <span id="status-bar" class="status-bar">Ready</span>
+    </header>
+
+    <main>
+        <!-- Left panel: query + response -->
+        <div class="left-panel">
+            <div class="query-section">
+                <div class="query-row">
+                    <div class="field-group">
+                        <label>Banks</label>
+                        <select id="bank-select" multiple size="6"></select>
+                    </div>
+                    <div class="field-group">
+                        <label>Periods</label>
+                        <select id="period-select" multiple size="6"></select>
+                    </div>
+                    <div class="field-group grow">
+                        <label for="test-query-select">Test Query</label>
+                        <select id="test-query-select">
+                            <option value="">-- Custom Query --</option>
+                        </select>
+                        <label for="query-input">Query</label>
+                        <textarea id="query-input"
+                            placeholder="Enter your query..."></textarea>
+                    </div>
+                    <div class="field-group">
+                        <label>Sources</label>
+                        <select id="source-select" multiple size="6"></select>
+                    </div>
+                    <div class="action-stack">
+                        <button id="run-btn" class="btn-run"
+                            onclick="runQuery()">Run Query</button>
+                        <button id="export-btn" class="btn-export"
+                            onclick="exportResult()" disabled>
+                            Export</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="response-section">
+                <div id="response-text"
+                    class="response-text empty">Select a test query or
+                    enter your own to begin.</div>
+            </div>
+        </div>
+
+        <!-- Right panel: debug -->
+        <div class="right-panel">
+            <div id="debug-empty" class="empty-state">
+                <h2>Debug Panel</h2>
+                <p>Run a query to see trace details</p>
+            </div>
+
+            <div id="debug-content" style="display: none;">
+                <!-- Timing Metrics -->
+                <div class="debug-section open" id="section-metrics">
+                    <div class="debug-header"
+                        onclick="toggleSection('section-metrics')">
+                        <span class="arrow">&#9654;</span>
+                        Timing Metrics
+                    </div>
+                    <div class="debug-body">
+                        <div id="metrics-grid" class="metrics-grid">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Token Usage -->
+                <div class="debug-section open" id="section-tokens">
+                    <div class="debug-header"
+                        onclick="toggleSection('section-tokens')">
+                        <span class="arrow">&#9654;</span>
+                        Token Usage
+                    </div>
+                    <div class="debug-body">
+                        <div id="token-grid" class="metrics-grid"></div>
+                    </div>
+                </div>
+
+                <!-- Prepared Query -->
+                <div class="debug-section open" id="section-prepared">
+                    <div class="debug-header"
+                        onclick="toggleSection('section-prepared')">
+                        <span class="arrow">&#9654;</span>
+                        Prepared Query
+                    </div>
+                    <div class="debug-body" id="prepared-body"></div>
+                </div>
+
+                <!-- Per-Source Results -->
+                <div class="debug-section open" id="section-sources">
+                    <div class="debug-header"
+                        onclick="toggleSection('section-sources')">
+                        <span class="arrow">&#9654;</span>
+                        Source Results
+                    </div>
+                    <div class="debug-body" id="sources-body"></div>
+                </div>
+
+                <!-- Run Trace -->
+                <div class="debug-section open" id="section-trace">
+                    <div class="debug-header"
+                        onclick="toggleSection('section-trace')">
+                        <span class="arrow">&#9654;</span>
+                        Run Trace
+                    </div>
+                    <div class="debug-body" id="trace-body">
+                        <div id="trace-content"></div>
+                    </div>
+                </div>
+
+                <!-- Source Traces -->
+                <div class="debug-section open" id="section-source-traces">
+                    <div class="debug-header"
+                        onclick=
+                        "toggleSection('section-source-traces')">
+                        <span class="arrow">&#9654;</span>
+                        Source Traces
+                    </div>
+                    <div class="debug-body"
+                        id="source-traces-body"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

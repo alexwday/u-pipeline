@@ -1,6 +1,7 @@
 """Tests for iterative research agent loop."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +22,15 @@ from retriever.stages.research import (
     _parse_research_response,
     _search_additional,
     research_combo_source,
+)
+from retriever.utils.prompt_loader import load_prompt
+
+_RESEARCH_PROMPTS_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "src"
+    / "retriever"
+    / "stages"
+    / "prompts"
 )
 
 
@@ -1158,3 +1168,176 @@ def test_search_additional_empty_embeddings(monkeypatch):
     )
 
     assert not new_chunks
+
+
+# -- research.yaml structural tests --
+
+
+def _load_research_prompt() -> dict:
+    """Load the research prompt for structural assertions."""
+    return load_prompt(
+        "research",
+        prompts_dir=_RESEARCH_PROMPTS_DIR,
+    )
+
+
+def test_research_prompt_has_bridge_extraction_rule():
+    """Rule 20 tells the LLM to extract bridges with surrounding context."""
+    prompt = _load_research_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "movement walk" in user_prompt
+    assert "waterfall" in user_prompt
+    assert "component bridge" in user_prompt
+
+
+def test_research_prompt_bridge_rule_requires_endpoints():
+    """Bridge rule asks for endpoint values and headline change."""
+    prompt = _load_research_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "endpoint values" in user_prompt
+    assert "headline change" in user_prompt
+
+
+def test_research_prompt_bridge_rule_requires_footnotes():
+    """Bridge rule asks for footnote / callout context."""
+    prompt = _load_research_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "footnote" in user_prompt
+    assert "callout" in user_prompt
+    assert "Other" in user_prompt
+
+
+def test_research_prompt_has_scope_qualifier_rule():
+    """Rule 21 tells the LLM to put scope qualifiers in metric_name."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "population scope" in flat
+    assert "scope qualifier verbatim in the metric_name" in flat
+    assert "loans and acceptances" in flat
+    assert "off-balance-sheet" in flat
+
+
+def test_research_prompt_has_unit_enrichment_rule():
+    """Rule 5 tells the LLM to populate the unit field via header-lookup."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "unit: the measurement unit for metric_value" in flat
+    assert '"$MM"' in flat
+    assert '"bps"' in flat
+    assert '"x"' in flat
+    assert "header-lookup and populate this field" in flat
+    assert "(Millions of Canadian dollars)" in flat
+    assert 'metric_value "100,415"' in flat
+    assert 'unit "$MM"' in flat
+    assert "Do NOT invent units not present in the chunk" in flat
+
+
+def test_research_prompt_qualitative_rule_includes_unit():
+    """Rule 6 lists unit among fields to set empty for qualitative findings."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "set metric_name, metric_value, unit, period, and segment" in flat
+
+
+def test_research_prompt_has_methodology_footnote_rule():
+    """Rule 22 tells the LLM to skip methodology/definition footnotes."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert (
+        "A methodology footnote, glossary entry, or definition block "
+        "that only describes how a non-GAAP measure is calculated is "
+        "not itself a finding"
+    ) in flat
+    assert "parenthesized component list" in flat
+    assert "Income (A) before income taxes (B) and PCL (C)" in flat
+    assert "is calculated as" in flat
+    assert "is defined as" in flat
+    assert "Do not extract the calculation inputs themselves" in flat
+
+
+def test_research_prompt_rule22_has_waterfall_carveout():
+    """Rule 22 carves out waterfall bars from the calculation-input ban."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "In addition, this prohibition extends to prose variants" in flat
+    assert "Exception (rule 20)" in flat
+    assert "waterfall bars, bridge steps" in flat
+    assert "MUST be extracted per rule 20" in flat
+    assert "(33) bps" in flat
+    assert "standard accounting notation for a negative number" in flat
+
+
+def test_research_prompt_rule22_bans_prose_calculation_inputs():
+    """Rule 22 bans prose-form and qualitative-narrative calculation inputs."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "prose form" in flat
+    assert "is calculated as A before B and C" in flat
+    assert "for Q1 these inputs were" in flat
+    assert (
+        "qualitative findings whose finding-text body recites "
+        "the calculation input values in narrative form"
+    ) in flat
+    assert "not a loophole for surfacing component values" in flat
+
+
+def test_research_prompt_rule20_has_waterfall_worked_example():
+    """Rule 20 has a verbatim CET1 waterfall worked example."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "Worked example" in flat
+    assert '"Q4/2025 13.5%"' in flat
+    assert '"Q1/2026 13.7%"' in flat
+    assert '"CET1 movement — Net Income"' in flat
+    assert '"CET1 movement — Dividends"' in flat
+    assert '"CET1 movement — RWA Growth"' in flat
+    assert '"CET1 movement — Share Repurchases"' in flat
+    assert '"CET1 movement — Other"' in flat
+    assert 'metric_value "-33"' in flat
+    assert 'metric_value "-26"' in flat
+    assert 'metric_value "-13"' in flat
+    assert "DO NOT collapse the 5 component bars" in flat
+    assert (
+        "DO NOT skip extraction because the components do not reconcile"
+        in flat
+    )
+
+
+def test_research_prompt_has_multi_bullet_extraction_rule():
+    """Rule 23 tells the LLM to extract each narrative bullet separately."""
+    prompt = _load_research_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "multiple narrative bullets" in flat
+    assert (
+        "extract each distinct statement as its own qualitative finding"
+        in flat
+    )
+    assert "Do NOT summarize across bullets" in flat
+    assert "pick one as representative" in flat
+    assert "WHO / WHERE / WHICH-SEGMENTS" in flat
+    assert "WHY / HOW-CAUSED" in flat
+    assert "These are TWO findings, not one" in flat
+    assert "Do NOT merge them into a synthesized" in flat
+    assert "drops the segment-specific content from the main bullet" in flat
+    assert "Do NOT rewrite the source language" in flat
+    assert "pattern recognition, not source quotation" in flat
+    assert "<list of business units>" in flat
+    assert "<specific division>" in flat
+    assert "<cause_1>" in flat
+    assert "placeholders" in flat
+    assert "pattern slots" in flat
+    assert (
+        "preserve management's own wording, including proper nouns "
+        "for specific divisions and segment names"
+    ) in flat

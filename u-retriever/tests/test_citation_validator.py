@@ -101,3 +101,38 @@ def test_validate_preserves_optional_fields():
 
     assert validated["summary_answer"] == "Summary text"
     assert validated["metrics_table"] == "| col |"
+
+
+def test_validate_preserves_coverage_audit_fields():
+    """Coverage audit fields from F06 cluster survive validation."""
+    result = _make_result()
+    result["coverage_audit"] = (
+        "## Coverage audit\n\n### Uncited refs\n- [REF:7]"
+    )
+    result["uncited_ref_ids"] = [7]
+    result["unincorporated_findings"] = [
+        {
+            "ref_id": 3,
+            "source": "pillar3",
+            "page": 9,
+            "metric_name": "Net write-offs",
+            "metric_value": "634",
+        },
+    ]
+
+    validated = validate_consolidated_citations(result)
+
+    assert "## Coverage audit" in validated["coverage_audit"]
+    assert validated["uncited_ref_ids"] == [7]
+    assert len(validated["unincorporated_findings"]) == 1
+    assert validated["unincorporated_findings"][0]["ref_id"] == 3
+
+
+def test_validate_omits_absent_coverage_audit_fields():
+    """Absent audit fields stay absent (no default insertion)."""
+    result = _make_result()
+    validated = validate_consolidated_citations(result)
+
+    assert "coverage_audit" not in validated
+    assert "uncited_ref_ids" not in validated
+    assert "unincorporated_findings" not in validated

@@ -141,6 +141,24 @@ def test_research_finding_with_metric_fields():
     assert finding["segment"] == "Enterprise"
 
 
+def test_research_finding_with_unit_field():
+    """Create a ResearchFinding with the new unit field (F10)."""
+    finding: ResearchFinding = {
+        "finding": "CET1 capital was 100,415 million CAD",
+        "page": 3,
+        "location_detail": "Sheet KM1",
+        "metric_name": "Common Equity Tier 1 (CET1)",
+        "metric_value": "100,415",
+        "unit": "$MM",
+        "period": "Q1 2026",
+        "segment": "Enterprise",
+    }
+    assert finding["unit"] == "$MM"
+    assert finding["metric_value"] == "100,415"
+    # Unit is separate from the numeric value
+    assert "$" not in finding["metric_value"]
+
+
 def test_research_iteration_instantiation():
     """Create a ResearchIteration with confidence."""
     iteration: ResearchIteration = {

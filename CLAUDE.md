@@ -10,7 +10,7 @@
 
 ## Project Structure
 
-Two independent subprojects sharing a common input-data set:
+Three subprojects sharing a common input-data set:
 
 ```
 u-pipeline/
@@ -22,20 +22,26 @@ u-pipeline/
 │   ├── src/retriever/    # Source code
 │   ├── tests/            # Test suite
 │   └── .env              # Environment config
-└── input-data/            # Shared test documents
-    ├── pillar3/          # XLSX disclosures by period/bank
-    └── investor-slides/  # PDF slides by period/bank
+├── u-debug/              # Web-based debug interface (Flask)
+│   ├── src/debug/        # Flask app + API endpoints
+│   └── tests/            # Test suite
+├── input-data/           # Source documents by type/period/bank
+├── docs/                 # Config reference, test queries
+└── scripts/              # Setup and database scripts
 ```
 
 ## Commands
 
 ```bash
-# All commands run from the subproject directory (u-ingestion/ or u-retriever/)
+# All commands run from the subproject directory (u-ingestion/, u-retriever/, or u-debug/)
 # using the shared venv at the project root
 
 # Run the startup check
 ../.venv/bin/python -m src.ingestion.main    # from u-ingestion/
 ../.venv/bin/python -m src.retriever.main    # from u-retriever/
+
+# Launch debug interface
+../.venv/bin/python -m src.debug.app         # from u-debug/, opens http://localhost:5000
 
 # Run all tests with coverage
 ../.venv/bin/python -m pytest --cov=src --cov-report=term-missing

@@ -17,6 +17,7 @@ class ResearchFinding(TypedDict):
     location_detail: str
     metric_name: NotRequired[str]
     metric_value: NotRequired[str]
+    unit: NotRequired[str]
     period: NotRequired[str]
     segment: NotRequired[str]
 
@@ -125,6 +126,9 @@ class ConsolidatedResult(TypedDict):
     metrics_table: NotRequired[str]
     detailed_summary: NotRequired[str]
     reference_index: NotRequired[list[dict]]
+    coverage_audit: NotRequired[str]
+    uncited_ref_ids: NotRequired[list[int]]
+    unincorporated_findings: NotRequired[list[dict]]
     metrics: NotRequired[dict]
     citation_warnings: NotRequired[list[str]]
     trace_id: NotRequired[str]

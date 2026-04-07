@@ -347,6 +347,69 @@ def test_run_retrieval_writes_trace_files(monkeypatch):
     source_trace_path = Path(run_trace["source_traces"][0]["trace_path"])
     assert source_trace_path.exists()
 
+    outputs = run_trace["outputs"]
+    assert outputs["coverage_audit"] == ""
+    assert outputs["uncited_ref_ids"] == []
+    assert outputs["unincorporated_findings"] == []
+
+
+def test_run_retrieval_trace_includes_populated_audit_fields(monkeypatch):
+    """Audit fields on ConsolidatedResult round-trip into the run trace."""
+    _set_orchestrator_env(monkeypatch)
+    _stub_resolve_single(monkeypatch)
+    _stub_prepare(monkeypatch)
+    _stub_connection(monkeypatch)
+    _stub_tokens(monkeypatch)
+    _stub_search_pipeline(monkeypatch)
+    _stub_research(monkeypatch)
+
+    def consolidate(_query, results, _llm, metrics=None, **_kw):
+        """Return a consolidated result with populated audit fields."""
+        if metrics is not None:
+            metrics["wall_time_seconds"] = 0.1
+        return ConsolidatedResult(
+            query="CET1 ratio",
+            combo_results=results,
+            consolidated_response="CET1 ratio 13.7%.",
+            key_findings=["CET1 ratio 13.7%."],
+            data_gaps=[],
+            coverage_audit="## Coverage audit\n\n### Uncited refs\n- [REF:7]",
+            uncited_ref_ids=[7],
+            unincorporated_findings=[
+                {
+                    "ref_id": 3,
+                    "source": "pillar3",
+                    "page": 9,
+                    "location_detail": "LI1",
+                    "metric_name": "Net write-offs",
+                    "metric_value": "634",
+                    "finding": "Total net write-offs were 634.",
+                },
+            ],
+        )
+
+    monkeypatch.setattr(f"{_MOD}.consolidate_results", consolidate)
+
+    result = run_retrieval(
+        "CET1 ratio",
+        [_make_combo()],
+        None,
+        MagicMock(),
+        MagicMock(),
+    )
+
+    run_trace_path = Path(result["trace_path"])
+    with open(run_trace_path, encoding="utf-8") as fh:
+        run_trace = json.load(fh)
+
+    outputs = run_trace["outputs"]
+    assert "## Coverage audit" in outputs["coverage_audit"]
+    assert outputs["uncited_ref_ids"] == [7]
+    assert len(outputs["unincorporated_findings"]) == 1
+    entry = outputs["unincorporated_findings"][0]
+    assert entry["ref_id"] == 3
+    assert entry["metric_value"] == "634"
+
 
 def test_run_retrieval_validates_citations_before_return(monkeypatch):
     """Citation validation runs on consolidated output."""

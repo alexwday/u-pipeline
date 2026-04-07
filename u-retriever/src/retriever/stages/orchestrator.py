@@ -776,6 +776,12 @@ def _build_run_trace_payload(
             "key_findings": consolidated["key_findings"],
             "data_gaps": consolidated["data_gaps"],
             "citation_warnings": consolidated.get("citation_warnings", []),
+            "coverage_audit": consolidated.get("coverage_audit", ""),
+            "uncited_ref_ids": consolidated.get("uncited_ref_ids", []),
+            "unincorporated_findings": consolidated.get(
+                "unincorporated_findings",
+                [],
+            ),
         },
         "metrics": pipeline_metrics,
     }

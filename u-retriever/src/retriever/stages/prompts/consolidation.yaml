@@ -36,13 +36,143 @@ user_prompt: >
 
   ## Metrics
   A markdown table comparing quantitative findings across sources.
-  Columns: Entity | Segment | Line Item | then one column per
-  period found in the data.
-  Each cell contains the value followed by [REF:N].
-  Normalize metric names across sources into consistent line items.
-  When multiple sources corroborate the same value, list all
-  references: "13.7% [REF:1][REF:4]".
-  When values conflict, show both side by side.
+  Columns: Entity | Segment | Line Item | Unit | then one
+  column per period found in the data | Source (last column).
+  Value columns contain ONLY the numeric value — no unit, no
+  citations. The "Line Item" column contains the metric name
+  ONLY — do not append a parenthesized unit suffix; the unit
+  goes in its own column. The "Unit" column holds a compact
+  unit token ($MM, $B, %, bps, x, #) taken from the finding's
+  unit field. The final "Source" column names the data source(s)
+  with their supporting [REF:N] inline, formatted as
+  "source [REF:N]; source [REF:N]". Example: a row sourced from
+  investor-slides ref 1 and rts ref 11 shows
+  "investor-slides [REF:1]; rts [REF:11]" in the Source column.
+  There is NO separate Ref column — refs live inline in the
+  Source column next to their source label.
+
+  ONE VALUE PER CELL — never put multiple values
+  (e.g. semicolon-separated) in the same cell.
+
+  MULTI-SOURCE HANDLING. Default: preserve source
+  transparency. Do NOT assume that two sources reporting
+  similar values for the same metric are reporting the same
+  underlying fact. Apply these rules in order:
+
+  1. Same metric, same exact value across multiple sources:
+     ONE ROW. The Source column lists all agreeing sources
+     with their refs inline, separated by semicolons (e.g.
+     "investor-slides [REF:1]; rts [REF:11]"). There is no
+     separate Ref column — refs live inline in the Source
+     column.
+
+  2. Same metric, values that differ ONLY by rounding
+     precision AND the context makes the rounding
+     relationship unambiguous (e.g. one source says
+     "$8.5 billion" and another says "$8,497MM" — the former
+     is self-evidently a rounded form of the latter; or one
+     source uses 1 decimal place and another uses integer
+     millions for the same concept): collapse to ONE ROW
+     using the most precise value. The Source column lists
+     all sources with their refs inline: "investor-slides
+     [REF:1]; rts [REF:11]". When in doubt about whether
+     rounding explains the gap, DO NOT collapse — fall
+     through to rule 3.
+
+  3. Same metric, values that genuinely differ, OR you
+     cannot determine with certainty whether rounding
+     explains the gap: create ONE ROW PER SOURCE. Each
+     row's Source column shows that single source's label
+     with its ref inline (e.g. "investor-slides [REF:1]" on
+     one row, "rts [REF:11]" on another). Surface the
+     discrepancy as an item in the Gaps section so the
+     reader knows the sources disagree on this metric's
+     value.
+
+  4. Same metric label under different scopes, bases, or
+     consolidation perimeters (e.g. retained earnings on
+     the balance sheet vs. in the CET1 composition vs.
+     under the regulatory consolidation scope): create ONE
+     ROW per scope with a distinguishing suffix in the Line
+     Item column (e.g. "Retained earnings — balance sheet",
+     "Retained earnings — CET1 composition",
+     "Retained earnings — regulatory scope"). Each row
+     still carries its own Source label with its ref inline
+     from the source providing that scope's value. This
+     rule composes with rules 1–3 above: if two sources
+     agree on the same scope, merge per rule 1; if they
+     differ beyond rounding, split per rule 3.
+
+  DUPLICATE ROW CHECK — before finalizing the Metrics table,
+  scan for rows with identical Entity + Segment + Line Item
+  + Source tuples. Such rows describe the same metric from
+  the same source and MUST be merged into a single row.
+  Rows with the same Entity/Segment/Line Item but different
+  Source labels are legitimate splits per rule 3.
+
+  FORMATTING STANDARDS. Apply these conventions to every row
+  so the table reads consistently regardless of which period
+  columns are present:
+
+  (a) Unit column. Every row must populate the Unit column
+      with a compact unit token taken from the finding's
+      `unit` field (populated by research rule 5). Valid
+      tokens:
+      - "$MM" for dollar values in millions
+      - "$B" for dollar values in billions
+      - "%" for percentage ratios (CET1 ratio, PCL ratios,
+        coverage ratios expressed as percentages)
+      - "bps" for basis-point values
+      - "x" for dimensionless ratio multiples (e.g. a 1.47x
+        coverage ratio)
+      - "#" for counts
+      The Line Item column contains the metric NAME ONLY —
+      do NOT append a parenthesized unit suffix to Line
+      Item. Example: Line Item is "Pre-provision, pre-tax
+      earnings (PPPT)" with Unit "$MM", NOT "PPPT ($MM)"
+      in Line Item. When composing with rule 4's
+      scope-suffix split, the scope suffix still goes in
+      Line Item (e.g. "Retained earnings — regulatory
+      scope") and the unit goes in the Unit column.
+      If a finding arrives with an empty `unit` field
+      (older trace or a source where research couldn't
+      determine the unit), infer the unit from the source
+      context: quarterly bank earnings figures are almost
+      always dollars in millions unless stated otherwise.
+      Do NOT leave the Unit column blank — populate it from
+      the finding's unit field or use your best inference,
+      and only use em dash "—" if even inference is
+      impossible.
+
+  (b) Value columns (period columns such as "Q1 2026",
+      "Q4 2025"). Bare numeric only — no currency symbol, no
+      thousands separator, no trailing unit. The Line Item
+      suffix carries the unit. Examples: "8497" not "$8,497"
+      or "8,497"; "13.7" not "13.7%"; "0.41" not "0.41%".
+      Decimal precision should match the source: "13.7" not
+      "13.70", "0.41" not "0.4".
+
+  (c) Delta / change columns (e.g. "QoQ change",
+      "YoY change"). Format values as SIGN-EXPLICIT numerics
+      in the same unit as the base value:
+      - Dollar deltas (for $MM or $B rows): signed integer
+        "+83" / "-40"
+      - Ratio deltas (for (%) rows): signed basis-point or
+        percentage-point form "+0.20 pp" / "-0.02 pp",
+        matching the base value's decimal precision
+      - Percent-change columns (growth rate on dollar
+        values): signed percent "+14%" / "-3%"
+      - Zero value: an explicit numeric zero in the
+        appropriate form — "0", "+0.00 pp", or "0%". NEVER
+        use the words "flat", "unchanged", "nil", "stable",
+        or symbols like "--".
+
+  (d) Missing data. Use em dash "—" for any cell where the
+      value is genuinely not available in the findings.
+      Never leave a cell empty between pipes. Never use
+      "N/A", "TBD", "n/a", or blank. An em dash is
+      unambiguous; a blank cell reads as a formatting bug.
+
   Omit this section if there are no quantitative findings.
 
   ## Detail
@@ -51,15 +181,24 @@ user_prompt: >
   Cite every factual statement with [REF:N].
 
   ## Gaps
-  List ONLY information that the query specifically asked for
-  but could not be found in any source. Do not list:
+  OMIT this section entirely if the query is fully answered and
+  no internal consistency issues were detected in the findings.
+  Include this section when EITHER:
+  (a) the query specifically asked for information that could
+      not be found in any source, OR
+  (b) an internal consistency issue was detected in the source
+      data — e.g., a component breakdown that does not reconcile
+      to a stated total, a value juxtaposition where population
+      scopes differ, or a residual bucket whose composition
+      cannot be explained from the findings.
+  When included, list only the missing items or the specific
+  inconsistencies. Do NOT list:
   - Information the query did not ask for (forward-looking
     guidance, segment breakdowns, roll-forwards, etc.)
   - Observations about data granularity or presentation
   - Positive statements about source agreement
   - Caveats about what additional data might be useful
-  Write "None identified" if the query is fully answered by
-  the available findings.
+  Never write "None identified" — just leave the section out.
 
   Rules:
   1. Use ONLY [REF:N] identifiers that exist in the reference
@@ -70,7 +209,131 @@ user_prompt: >
      findings directly instead of flagging missing sources.
   5. Prefer percentage form for ratios. Omit redundant decimal
      restatements.
-  6. Include every numeric value from the reference index that
-     answers any part of the query. Do not drop values for
-     brevity. Conciseness means using clear language, not
-     omitting data points the query asked for.
+  6. Coverage commitment — include every finding from the
+     reference index in the response unless it is genuinely
+     off-topic for the query. Before finalizing, mentally walk
+     each [REF:N] entry and verify that EVERY finding listed
+     under that ref is represented somewhere in Summary,
+     Metrics, or Detail. Apply these sub-rules:
+     (a) Quantitative findings: include the metric_name and
+         metric_value in Metrics (as a row) or Detail (as
+         inline prose). Rounding to sensible precision is
+         fine; dropping a value for "brevity" is not.
+         Conciseness means clear language, not fewer data
+         points.
+     (b) Qualitative findings (empty metric_name/value): lift
+         the factual content into Detail prose. Do NOT treat
+         qualitative findings as background context to be
+         skipped. Example: a segment-color finding like
+         "provisions mainly in Personal Banking, Capital
+         Markets and Commercial Banking, partially offset by
+         a release in City National Bank" must be surfaced in
+         the Detail credit-losses paragraph as written.
+     (c) Adjusted-vs-reported pairs: when a metric has both a
+         reported value (e.g. reported PPPT +14% YoY) and an
+         adjusted value (e.g. adjusted PPPT +12% YoY) in the
+         findings, BOTH must appear in the response. The
+         adjusted figure is not redundant with the reported
+         figure; the gap between them is itself newsworthy.
+     (d) Distinct findings within a single ref: when one
+         [REF:N] groups multiple distinct findings (e.g.
+         REF:1 contains both "reported PPPT = 8,497" and
+         "adjusted PPPT(2) up YoY = 12%"), each distinct
+         finding must be represented independently. Citing
+         the ref for one finding does not excuse dropping
+         the others.
+     (e) Scope-qualified findings: if a finding carries a
+         scope qualifier in its metric_name (per research
+         rule 21, e.g. "ACL on loans and acceptances" vs.
+         "Stage 1 & 2 — all exposures") and rule 8 (scope
+         comparability) seems to conflict with another
+         finding's scope, the correct resolution is to use
+         a scope-qualified row per the ## Metrics section
+         rule 4 — NOT to drop the finding. Retreat from a
+         topic to avoid scope conflict is a coverage
+         failure. Surface the finding with its scope label
+         and, if another source disagrees, split per
+         rules 3–4.
+     (f) Derived inferences allowed by rule 9
+         (segment-to-enterprise residual) do not need their
+         own finding; they cite the same refs that supported
+         the input values.
+     (g) Do NOT synthesize Metrics table rows by parsing
+         numeric values out of a qualitative finding's
+         narrative text. Per clause (b), qualitative findings
+         (those with empty metric_name/metric_value) belong
+         in Detail prose. If a qualitative finding's body
+         happens to recite dollar amounts, basis points, or
+         other figures inline (e.g. a narrative that mentions
+         "income of $5,785MM, income taxes of $1,622MM, PCL
+         of $1,090MM"), those numbers are NOT independent
+         metrics — they are evidence inside the qualitative
+         narrative and must remain in Detail prose only.
+         Creating a Metrics row from extracted narrative
+         numbers bypasses research-stage rule 22 (which
+         prohibits calculation-input components as findings)
+         and reintroduces forbidden component rows through
+         the consolidation stage. The Metrics table is built
+         ONLY from findings whose metric_name and metric_value
+         fields are populated by the research stage.
+     The only valid reason to omit a finding is that it is
+     topically unrelated to every part of the query. A
+     borderline finding should be included in Detail with a
+     brief framing, not silently dropped. If a finding must
+     be omitted as off-topic, add a one-line entry to the
+     Gaps section naming the ref and the reason.
+  7. Reconciliation check — whenever you present a component
+     breakdown, movement walk, waterfall, or decomposition in
+     Detail (e.g., a CET1 ratio walk, a segment-sum to
+     enterprise total, a bps contribution analysis), verify
+     that the listed components sum to the stated total or
+     endpoint change before writing it. If they do not
+     reconcile: (a) note the gap inline with any explanation
+     available in the findings (rounding, unspecified
+     residuals, scope differences, "Other" bucket composition),
+     and (b) if no explanation is available in the findings,
+     surface the inconsistency as an item in the Gaps section.
+     Do not silently present a bridge whose components do not
+     sum to the stated total.
+  8. Scope comparability — before placing two values in the
+     same Metrics row, the same Detail sentence, or computing
+     a delta or ratio between them, verify that the values
+     share: (a) entity, (b) period, (c) segment, AND
+     (d) population scope or measurement basis. Scope
+     qualifiers may appear in metric_name (e.g. "loans and
+     acceptances" vs. "loans + debt securities + off-balance-
+     sheet"), in location_detail, or in the finding prose
+     text. If the scopes differ, do NOT juxtapose the values
+     as if they were directly comparable: either split into
+     separate rows per the scope-suffix rule in the
+     `## Metrics` section, or, when presenting the values in
+     Detail prose, name the scope difference explicitly so
+     the reader understands the values are not directly
+     additive or comparable. Example of the trap this rule
+     prevents: juxtaposing "ACL on loans and acceptances of
+     $7,752MM" with "Stage 1 & 2 allowances of $7,258MM
+     across loans + debt securities + off-balance-sheet"
+     reads as if the latter is a subset of the former, but
+     their populations differ.
+  9. Segment-to-enterprise residual — when you present an
+     enterprise total's period-over-period change alongside
+     a single segment's period-over-period change for the
+     same metric, same period, and same scope, and the
+     segment's change is as large in magnitude as the
+     enterprise's change, or the segment moves in the
+     opposite direction to the enterprise, explicitly state
+     what the arithmetic implies for the unstated segments.
+     Example: if enterprise impaired PCL grew +$84M QoQ and
+     Capital Markets impaired PCL grew +$122M QoQ, add a
+     clause like "implying non-Capital Markets segments
+     collectively released ~$38M QoQ". The implied residual
+     is the enterprise change minus the segment change; name
+     it as "non-[segment] segments collectively" — do NOT
+     attribute the residual to specific other segments
+     unless the findings contain those segment-level values.
+     This rule applies only when both the enterprise delta
+     and the segment delta are directly available in the
+     findings for the same metric, period, and scope; do
+     not invent either value. Cite the same [REF:N] that
+     supported the two input values; no new reference is
+     needed for the inference.

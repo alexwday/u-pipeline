@@ -1,5 +1,6 @@
 """Tests for research consolidation across sources."""
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from retriever.models import (
@@ -9,11 +10,25 @@ from retriever.models import (
     SourceSpec,
 )
 from retriever.stages.consolidate import (
+    _build_coverage_audit_section,
     _build_reference_index,
+    _compute_coverage_audit,
     _create_ref_replacer,
     _extract_gap_list,
+    _extract_metric_value_tokens,
+    _finding_token_in_text,
+    _format_finding_summary,
     _parse_sections,
     consolidate_results,
+)
+from retriever.utils.prompt_loader import load_prompt
+
+_CONSOLIDATION_PROMPTS_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "src"
+    / "retriever"
+    / "stages"
+    / "prompts"
 )
 
 
@@ -80,11 +95,12 @@ def test_build_reference_index_single_source():
 
     assert len(entries) == 1
     assert entries[0]["ref_id"] == 1
-    assert entries[0]["finding"] == "CET1 ratio was 13.7%"
     assert entries[0]["page"] == 3
     assert entries[0]["source"] == "pillar3"
+    assert entries[0]["filename"] == "rbc_q1_2026_pillar3.xlsx"
     assert entries[0]["entity"] == "RBC"
-    assert entries[0]["metric_name"] == "CET1 Ratio"
+    assert len(entries[0]["findings"]) == 1
+    assert entries[0]["findings"][0]["finding"] == "CET1 ratio was 13.7%"
     assert "[REF:1]" in text
     assert "CET1 ratio was 13.7%" in text
     assert "Sheet KM1" in text
@@ -162,10 +178,50 @@ def test_build_reference_index_qualitative_finding():
     entries, text = _build_reference_index(results)
 
     assert len(entries) == 1
-    assert "metric_name" not in entries[0]
-    assert "Metric:" not in text
+    finding = entries[0]["findings"][0]
+    assert "metric_name" not in finding
     assert "[REF:1]" in text
     assert "Management indicated strong outlook" in text
+
+
+def test_build_reference_index_dedupes_same_location():
+    """Findings at the same (file, page, location) collapse to one ref."""
+    results = [
+        _make_combo_result_with_findings(
+            findings=[
+                ResearchFinding(
+                    finding="CET1 ratio was 13.7%",
+                    page=10,
+                    location_detail="CC1: Composition",
+                    metric_name="CET1",
+                    metric_value="13.7%",
+                    period="Q1/26",
+                ),
+                ResearchFinding(
+                    finding="Tier 1 ratio was 15.2%",
+                    page=10,
+                    location_detail="CC1: Composition",
+                    metric_name="Tier 1",
+                    metric_value="15.2%",
+                    period="Q1/26",
+                ),
+                ResearchFinding(
+                    finding="CET1 ratio was 13.5% in prior quarter",
+                    page=10,
+                    location_detail="CC1: Composition",
+                    metric_name="CET1",
+                    metric_value="13.5%",
+                    period="Q4/25",
+                ),
+            ],
+        ),
+    ]
+    entries, text = _build_reference_index(results)
+
+    assert len(entries) == 1
+    assert entries[0]["ref_id"] == 1
+    assert len(entries[0]["findings"]) == 3
+    assert text.count("[REF:") == 1
 
 
 # -- _create_ref_replacer tests --
@@ -176,29 +232,35 @@ def _make_ref_entries():
     return [
         {
             "ref_id": 1,
-            "finding": "CET1 ratio was 13.7%",
             "page": 3,
             "location_detail": "Sheet KM1",
             "source": "pillar3",
+            "filename": "rbc_pillar3.xlsx",
         },
         {
             "ref_id": 2,
-            "finding": "Tier 1 ratio was 15.2%",
             "page": 10,
             "location_detail": "Capital Overview",
             "source": "investor-slides",
+            "filename": "rbc_slides.pdf",
         },
     ]
 
 
 def test_ref_replacer_basic():
-    """Single-chunk replacement of [REF:N] patterns."""
+    """Single-chunk replacement emits clickable anchor citations."""
     replacer = _create_ref_replacer(_make_ref_entries())
     result = replacer["replace"](
         "CET1 was 13.7% [REF:1] and Tier 1 was 15.2% [REF:2]."
     )
-    assert "[pillar3, Page 3 - Sheet KM1]" in result
-    assert "[investor-slides, Page 10 - Capital Overview]" in result
+    assert (
+        '<a href="https://docs.local/files/rbc_pillar3.xlsx#page=3">[1]</a>'
+        in result
+    )
+    assert (
+        '<a href="https://docs.local/files/rbc_slides.pdf#page=10">[2]</a>'
+        in result
+    )
     assert "[REF:" not in result
     assert 1 in replacer["used_refs"]
     assert 2 in replacer["used_refs"]
@@ -212,7 +274,10 @@ def test_ref_replacer_split_across_chunks():
     part2 = replacer["replace"]("F:1] end.")
 
     combined = part1 + part2
-    assert "[pillar3, Page 3 - Sheet KM1]" in combined
+    assert (
+        '<a href="https://docs.local/files/rbc_pillar3.xlsx#page=3">[1]</a>'
+        in combined
+    )
     assert "[REF:" not in combined
 
 
@@ -233,20 +298,21 @@ def test_ref_replacer_flush():
 
 
 def test_ref_replacer_no_location():
-    """Ref with no location_detail omits dash in citation."""
+    """Ref with no location_detail still produces a clickable anchor."""
     entries = [
         {
             "ref_id": 1,
-            "finding": "Some finding",
             "page": 5,
             "location_detail": "",
             "source": "pillar3",
+            "filename": "rbc.xlsx",
         },
     ]
     replacer = _create_ref_replacer(entries)
     result = replacer["replace"]("See [REF:1].")
-    assert "[pillar3, Page 5]" in result
-    assert " - " not in result
+    assert (
+        '<a href="https://docs.local/files/rbc.xlsx#page=5">[1]</a>' in result
+    )
 
 
 # -- _parse_sections tests --
@@ -393,7 +459,8 @@ def test_consolidate_streams_to_callback(monkeypatch):
     )
 
     joined = "".join(chunks_received)
-    assert "[pillar3, Page 3 - Sheet KM1]" in joined
+    assert '<a href="https://docs.local/files/' in joined
+    assert ">[1]</a>" in joined
     assert "[REF:" not in joined
     assert len(chunks_received) > 0
 
@@ -461,6 +528,126 @@ def test_consolidate_metrics(monkeypatch):
     assert metrics["data_gaps"] == 0
 
 
+# -- consolidation.yaml structural tests --
+
+
+def _load_consolidation_prompt() -> dict:
+    """Load the consolidation prompt for structural assertions."""
+    return load_prompt(
+        "consolidation",
+        prompts_dir=_CONSOLIDATION_PROMPTS_DIR,
+    )
+
+
+def test_consolidation_prompt_has_reconciliation_rule():
+    """Rule 7 tells the LLM to reconcile component bridges."""
+    prompt = _load_consolidation_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "Reconciliation check" in user_prompt
+    assert "components sum to the stated total" in user_prompt
+    assert "movement walk" in user_prompt
+    assert "waterfall" in user_prompt
+
+
+def test_consolidation_prompt_gaps_section_widened():
+    """Gaps section accepts internal consistency issues."""
+    prompt = _load_consolidation_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "internal consistency issue" in user_prompt
+    assert "does not reconcile" in user_prompt
+    assert "scopes differ" in user_prompt
+
+
+def test_consolidation_prompt_metrics_one_value_per_cell():
+    """Metrics section forbids multi-value cells."""
+    prompt = _load_consolidation_prompt()
+    user_prompt = prompt["user_prompt"]
+
+    assert "ONE VALUE PER CELL" in user_prompt
+    assert "semicolon-separated" in user_prompt
+
+
+def test_consolidation_prompt_metrics_scope_suffix_rule():
+    """Metrics section handles precision, scope, and conflict cases."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "rounding precision" in flat
+    assert "different scopes" in flat or "consolidation perimeters" in flat
+    assert "genuinely differ" in flat
+    assert "suffix in the Line Item column" in flat
+
+
+def test_consolidation_prompt_metrics_duplicate_row_check():
+    """Metrics section requires a source-aware duplicate-row check."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "DUPLICATE ROW CHECK" in flat
+    assert "identical Entity + Segment + Line Item + Source" in flat
+    assert "MUST be merged into a single row" in flat
+
+
+def test_consolidation_prompt_metrics_has_source_column():
+    """Source column combines source + ref inline (F10 restructure)."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "Source (last column)" in flat
+    assert "preserve source transparency" in flat
+    assert "ONE ROW PER SOURCE" in flat
+    assert "Surface the discrepancy as an item in the Gaps section" in flat
+    assert "investor-slides [REF:1]; rts [REF:11]" in flat
+    assert "refs live inline in the Source column" in flat
+    assert "There is NO separate Ref column" in flat
+
+
+def test_consolidation_prompt_has_scope_comparability_rule():
+    """Rule 8 tells the LLM to verify scope before juxtaposing values."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "Scope comparability" in flat
+    assert "population scope or measurement basis" in flat
+    assert "not directly additive or comparable" in flat
+
+
+def test_consolidation_prompt_has_formatting_standards():
+    """Metrics section defines Unit column / delta / missing-data rules."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "FORMATTING STANDARDS" in flat
+    assert "Unit column" in flat
+    assert '"$MM"' in flat
+    assert '"$B"' in flat
+    assert '"bps"' in flat
+    assert "Line Item column contains the metric NAME ONLY" in flat
+    assert "do NOT append a parenthesized unit suffix to Line Item" in flat
+    assert "no currency symbol" in flat
+    assert "no thousands separator" in flat
+    assert "SIGN-EXPLICIT" in flat
+    assert 'NEVER use the words "flat"' in flat
+    assert 'em dash "—"' in flat
+    assert "Never leave a cell empty between pipes" in flat
+
+
+def test_consolidation_prompt_has_segment_residual_rule():
+    """Rule 9 tells the LLM to compute segment-to-enterprise residuals."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "Segment-to-enterprise residual" in flat
+    assert "same metric, same period, and same scope" in flat
+    assert "as large in magnitude" in flat
+    assert "opposite direction to the enterprise" in flat
+    assert "non-[segment] segments collectively" in flat
+    assert "do not invent either value" in flat
+    assert "Cite the same [REF:N] that supported the two input values" in flat
+
+
 def test_consolidate_fallback_without_stream(monkeypatch):
     """LLM without stream() falls back to call()."""
     _set_env(monkeypatch)
@@ -487,6 +674,426 @@ def test_consolidate_fallback_without_stream(monkeypatch):
 
     result = consolidate_results("CET1 ratio", combo_results, llm)
 
-    assert "[pillar3, Page 3 - Sheet KM1]" in (result["consolidated_response"])
+    assert (
+        '<a href="https://docs.local/files/' in result["consolidated_response"]
+    )
+    assert ">[1]</a>" in result["consolidated_response"]
     assert result["data_gaps"] == []
     llm.call.assert_called_once()
+
+
+# -- F10: unit field in _format_finding_summary --
+
+
+def test_format_finding_summary_includes_unit():
+    """Finding with unit field renders 'metric = value unit' in ref index."""
+    finding: ResearchFinding = {
+        "finding": "CET1 capital was 100,415 million CAD",
+        "page": 3,
+        "location_detail": "Sheet KM1",
+        "metric_name": "Common Equity Tier 1 (CET1)",
+        "metric_value": "100,415",
+        "unit": "$MM",
+        "period": "Q1 2026",
+        "segment": "Enterprise",
+    }
+    text = _format_finding_summary(finding)
+    assert "Common Equity Tier 1 (CET1) = 100,415 $MM" in text
+    assert "(Q1 2026)" in text
+    assert "[Enterprise]" in text
+
+
+def test_format_finding_summary_without_unit_legacy():
+    """Legacy finding without unit field renders cleanly (backwards compat)."""
+    finding: ResearchFinding = {
+        "finding": "CET1 ratio was 13.7%",
+        "page": 3,
+        "location_detail": "Sheet KM1",
+        "metric_name": "CET1 Ratio",
+        "metric_value": "13.7%",
+        "period": "Q1 2026",
+        "segment": "Enterprise",
+    }
+    text = _format_finding_summary(finding)
+    assert "CET1 Ratio = 13.7%" in text
+    # No extraneous trailing space or empty unit
+    assert "13.7% (Q1 2026)" in text
+
+
+# -- F06 cluster: coverage audit tests --
+
+
+def test_consolidation_prompt_has_coverage_commitment_rule():
+    """Rule 6 (replaced) tells the LLM to walk every ref and cover findings."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "Coverage commitment" in flat
+    assert "mentally walk each [REF:N] entry" in flat
+    assert "EVERY finding listed under that ref is represented" in flat
+    assert "Do NOT treat qualitative findings as background" in flat
+    assert "Adjusted-vs-reported pairs" in flat
+    assert "each distinct finding must be represented independently" in flat
+    assert "Retreat from a topic to avoid scope conflict is a coverage" in flat
+    assert "Derived inferences allowed by rule 9" in flat
+    assert (
+        "Do NOT synthesize Metrics table rows by parsing numeric values"
+        in flat
+    )
+    assert "bypasses research-stage rule 22" in flat
+    assert (
+        "built ONLY from findings whose metric_name and metric_value "
+        "fields are populated"
+    ) in flat
+
+
+def test_consolidation_prompt_rule6g_preserves_qualitative_to_detail_routing():
+    """Clause (g) routes qualitative-finding numbers to Detail, not Metrics."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+
+    assert "belong in Detail prose" in flat
+    assert "NOT independent metrics" in flat
+    assert "reintroduces forbidden component rows" in flat
+    assert "evidence inside the qualitative narrative" in flat
+
+
+def test_extract_metric_value_tokens_basic():
+    """Tokens extracted from common metric_value shapes."""
+    assert _extract_metric_value_tokens("12%") == ["12%"]
+    assert _extract_metric_value_tokens("634") == ["634"]
+    assert _extract_metric_value_tokens("73 bps (+2 bps QoQ)") == [
+        "73 bps",
+        "2 bps",
+    ]
+
+
+def test_extract_metric_value_tokens_strips_separators():
+    """Thousands separators are stripped before token extraction."""
+    tokens = _extract_metric_value_tokens("9,294 (Allowance 2,238)")
+    assert "9294" in tokens
+    assert "2238" in tokens
+
+
+def test_extract_metric_value_tokens_empty():
+    """Empty / None metric_value returns empty list."""
+    assert _extract_metric_value_tokens("") == []
+    assert _extract_metric_value_tokens("no numbers here") == []
+
+
+def test_finding_token_in_text_qualitative_skipped():
+    """Qualitative finding (empty metric_value) is treated as represented."""
+    finding = {"metric_name": "", "metric_value": "", "finding": "qualitative"}
+    assert _finding_token_in_text(finding, "any text") is True
+
+
+def test_finding_token_in_text_present():
+    """Finding whose token appears in text is considered represented."""
+    finding = {"metric_name": "ACL ratio", "metric_value": "73 bps"}
+    assert _finding_token_in_text(finding, "ACL was 73 bps in Q1") is True
+
+
+def test_finding_token_in_text_absent():
+    """Finding whose token does not appear is flagged."""
+    finding = {"metric_name": "Adjusted PPPT", "metric_value": "12%"}
+    text = "Reported PPPT grew 14% YoY"
+    assert _finding_token_in_text(finding, text) is False
+
+
+def test_finding_token_in_text_rounded_match():
+    """A bare number finding still matches when wrapped in currency suffix."""
+    finding = {"metric_name": "Net write-offs", "metric_value": "634"}
+    text = "Net write-offs were $634MM in Q1"
+    assert _finding_token_in_text(finding, text) is True
+
+
+def test_finding_token_in_text_thousands_separator_match():
+    """Comma-separated source value matches comma-stripped response token."""
+    finding = {"metric_name": "Impaired exposures", "metric_value": "9294"}
+    # caller pre-strips commas before searching
+    text = "Total impaired exposures of 9294 reported"
+    assert _finding_token_in_text(finding, text) is True
+
+
+def test_compute_coverage_audit_layer1_uncited():
+    """Layer 1 detects refs that were never cited."""
+    ref_entries = [
+        {
+            "ref_id": 1,
+            "source": "rts",
+            "page": 4,
+            "location_detail": "Capital",
+            "findings": [
+                {"metric_name": "CET1", "metric_value": "13.7%"},
+            ],
+        },
+        {
+            "ref_id": 2,
+            "source": "pillar3",
+            "page": 16,
+            "location_detail": "CRB_f_b",
+            "findings": [
+                {"metric_name": "Net write-offs", "metric_value": "634"},
+            ],
+        },
+    ]
+    response = "CET1 was 13.7% in Q1."
+    audit = _compute_coverage_audit(ref_entries, {1}, response)
+    assert audit["uncited_ref_ids"] == [2]
+    assert not audit["unincorporated_findings"]
+
+
+def test_compute_coverage_audit_layer2_unincorporated():
+    """Layer 2 detects findings whose tokens are missing from text."""
+    ref_entries = [
+        {
+            "ref_id": 1,
+            "source": "investor-slides",
+            "page": 8,
+            "location_detail": "Q1/26 Highlights",
+            "findings": [
+                {
+                    "metric_name": "Reported PPPT",
+                    "metric_value": "8,497",
+                },
+                {
+                    "metric_name": "Adjusted PPPT(2) up YoY",
+                    "metric_value": "12%",
+                },
+            ],
+        },
+    ]
+    response = "PPPT was 8,497 in Q1, up 14% YoY."
+    audit = _compute_coverage_audit(ref_entries, {1}, response)
+    assert not audit["uncited_ref_ids"]
+    assert len(audit["unincorporated_findings"]) == 1
+    missed = audit["unincorporated_findings"][0]
+    assert missed["metric_name"] == "Adjusted PPPT(2) up YoY"
+    assert missed["metric_value"] == "12%"
+    assert missed["ref_id"] == 1
+
+
+def test_compute_coverage_audit_qualitative_not_flagged():
+    """Qualitative findings inside cited refs are never layer-2 flagged."""
+    ref_entries = [
+        {
+            "ref_id": 1,
+            "source": "investor-slides",
+            "page": 18,
+            "location_detail": "ACL",
+            "findings": [
+                {
+                    "metric_name": "Performing ACL",
+                    "metric_value": "5,500",
+                },
+                {
+                    "metric_name": "",
+                    "metric_value": "",
+                    "finding": "Release in CNB this quarter.",
+                },
+            ],
+        },
+    ]
+    response = "Performing ACL was 5,500 in Q1."
+    audit = _compute_coverage_audit(ref_entries, {1}, response)
+    # Qualitative finding skipped — only relies on prompt rule 6(b)
+    assert not audit["unincorporated_findings"]
+
+
+def test_compute_coverage_audit_clean():
+    """All refs cited and all tokens present yields empty audit."""
+    ref_entries = [
+        {
+            "ref_id": 1,
+            "source": "rts",
+            "page": 4,
+            "location_detail": "Capital",
+            "findings": [
+                {"metric_name": "CET1", "metric_value": "13.7%"},
+            ],
+        },
+    ]
+    audit = _compute_coverage_audit(ref_entries, {1}, "CET1 was 13.7%.")
+    assert not audit["uncited_ref_ids"]
+    assert not audit["unincorporated_findings"]
+
+
+def test_build_coverage_audit_section_empty():
+    """Clean audit produces empty string."""
+    audit = {"uncited_ref_ids": [], "unincorporated_findings": []}
+    assert _build_coverage_audit_section(audit, []) == ""
+
+
+def test_build_coverage_audit_section_layer1_only():
+    """Layer-1 only audit renders the Uncited refs subsection."""
+    ref_entries = [
+        {
+            "ref_id": 2,
+            "source": "pillar3",
+            "page": 16,
+            "location_detail": "CRB_f_b",
+            "findings": [
+                {
+                    "metric_name": "Net write-offs",
+                    "metric_value": "634",
+                    "finding": "Total net write-offs were 634.",
+                },
+            ],
+        },
+    ]
+    audit = {"uncited_ref_ids": [2], "unincorporated_findings": []}
+    text = _build_coverage_audit_section(audit, ref_entries)
+    assert "## Coverage audit" in text
+    assert "### Uncited refs" in text
+    assert "[REF:2]" in text
+    assert "pillar3 p16" in text
+    assert "CRB_f_b" in text
+    assert "Net write-offs" in text
+
+
+def test_build_coverage_audit_section_layer2_only():
+    """Layer-2 only audit renders the Unincorporated findings subsection."""
+    audit = {
+        "uncited_ref_ids": [],
+        "unincorporated_findings": [
+            {
+                "ref_id": 1,
+                "source": "investor-slides",
+                "page": 8,
+                "location_detail": "Q1/26 Highlights",
+                "metric_name": "Adjusted PPPT(2) up YoY",
+                "metric_value": "12%",
+                "finding": "Adjusted PPPT grew 12% YoY.",
+            }
+        ],
+    }
+    text = _build_coverage_audit_section(audit, [])
+    assert "## Coverage audit" in text
+    assert "### Unincorporated findings" in text
+    assert "[REF:1] investor-slides p8" in text
+    assert "Adjusted PPPT(2) up YoY = 12%" in text
+
+
+def test_consolidate_audit_surfaces_dropped_finding(monkeypatch):
+    """End-to-end: a finding the LLM omits gets flagged in coverage audit."""
+    _set_env(monkeypatch)
+    combo_results = [
+        _make_combo_result_with_findings(
+            findings=[
+                ResearchFinding(
+                    finding="Reported PPPT was 8,497.",
+                    page=8,
+                    location_detail="Q1/26 Highlights",
+                    metric_name="Reported PPPT",
+                    metric_value="8497",
+                    period="Q1 2026",
+                    segment="Enterprise",
+                ),
+                ResearchFinding(
+                    finding="Adjusted PPPT grew 12% YoY.",
+                    page=8,
+                    location_detail="Q1/26 Highlights",
+                    metric_name="Adjusted PPPT(2) up YoY",
+                    metric_value="12%",
+                    period="Q1 2026",
+                    segment="Enterprise",
+                ),
+            ],
+        ),
+    ]
+
+    def _stream(*_args, **_kwargs):
+        yield from [
+            "## Summary\n",
+            "PPPT was 8497 [REF:1].\n\n",
+            "## Detail\n",
+            "Reported only [REF:1].\n\n",
+            "## Gaps\nNone identified\n",
+        ]
+        return _STREAM_USAGE
+
+    llm = MagicMock()
+    llm.stream = _stream
+
+    result = consolidate_results("PPPT", combo_results, llm)
+
+    assert result["uncited_ref_ids"] == []
+    assert len(result["unincorporated_findings"]) == 1
+    missed = result["unincorporated_findings"][0]
+    assert missed["metric_name"] == "Adjusted PPPT(2) up YoY"
+    assert "## Coverage audit" in result["consolidated_response"]
+    assert "Adjusted PPPT(2) up YoY = 12%" in result["consolidated_response"]
+    assert result["coverage_audit"] != ""
+
+
+def test_consolidate_audit_clean_run_has_no_section(monkeypatch):
+    """Clean run leaves consolidated_response without a coverage audit."""
+    _set_env(monkeypatch)
+    combo_results = [_make_combo_result_with_findings()]
+    llm = _make_stream_llm()
+
+    result = consolidate_results("CET1 ratio", combo_results, llm)
+
+    assert result["uncited_ref_ids"] == []
+    assert result["unincorporated_findings"] == []
+    assert result.get("coverage_audit", "") == ""
+    assert "## Coverage audit" not in result["consolidated_response"]
+
+
+def test_consolidate_audit_streams_to_callback(monkeypatch):
+    """When audit fires, the audit section is also streamed via on_chunk."""
+    _set_env(monkeypatch)
+    combo_results = [
+        _make_combo_result_with_findings(
+            findings=[
+                ResearchFinding(
+                    finding="Reported PPPT was 8,497.",
+                    page=8,
+                    location_detail="Q1/26 Highlights",
+                    metric_name="Reported PPPT",
+                    metric_value="8497",
+                    period="Q1 2026",
+                    segment="Enterprise",
+                ),
+                ResearchFinding(
+                    finding="Adjusted PPPT grew 12% YoY.",
+                    page=8,
+                    location_detail="Q1/26 Highlights",
+                    metric_name="Adjusted PPPT(2) up YoY",
+                    metric_value="12%",
+                    period="Q1 2026",
+                    segment="Enterprise",
+                ),
+            ],
+        ),
+    ]
+
+    def _stream(*_args, **_kwargs):
+        yield from [
+            "## Summary\nPPPT was 8497 [REF:1].\n\n",
+            "## Detail\nReported only [REF:1].\n\n",
+            "## Gaps\nNone identified\n",
+        ]
+        return _STREAM_USAGE
+
+    llm = MagicMock()
+    llm.stream = _stream
+    chunks: list[str] = []
+
+    consolidate_results("PPPT", combo_results, llm, on_chunk=chunks.append)
+
+    joined = "".join(chunks)
+    assert "## Coverage audit" in joined
+    assert "Adjusted PPPT(2) up YoY = 12%" in joined
+
+
+def test_parse_sections_recognizes_coverage_audit():
+    """## Coverage audit heading is parsed into the coverage_audit key."""
+    text = (
+        "## Summary\nFoo [REF:1].\n\n"
+        "## Coverage audit\n### Uncited refs\n- [REF:2] item\n"
+    )
+    sections = _parse_sections(text)
+    assert sections["summary"].startswith("Foo")
+    assert sections["coverage_audit"].startswith("### Uncited refs")
+    assert "[REF:2] item" in sections["coverage_audit"]

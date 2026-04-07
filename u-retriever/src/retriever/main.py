@@ -17,7 +17,9 @@ from .stages.orchestrator import run_retrieval
 from .stages.startup import run_startup
 
 _YAML_PATH = (
-    Path(__file__).resolve().parent.parent.parent.parent / "docs" / "test_queries.yaml"
+    Path(__file__).resolve().parent.parent.parent.parent
+    / "docs"
+    / "test_queries.yaml"
 )
 _LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 
@@ -295,6 +297,12 @@ def _run_test_case(
             "data_gaps": gaps,
             "citation_warnings": result.get(
                 "citation_warnings",
+                [],
+            ),
+            "coverage_audit": result.get("coverage_audit", ""),
+            "uncited_ref_ids": result.get("uncited_ref_ids", []),
+            "unincorporated_findings": result.get(
+                "unincorporated_findings",
                 [],
             ),
             "assertion_failures": assertion_failures,

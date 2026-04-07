@@ -24,14 +24,39 @@ STAGE = "6-CONSOLIDATION"
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 
+def _format_finding_summary(finding: ResearchFinding) -> str:
+    """Format a single finding for the prompt's reference index.
+
+    Params: finding (ResearchFinding). Returns: str.
+    """
+    parts: list[str] = []
+    if finding.get("metric_name"):
+        metric = finding["metric_name"]
+        if finding.get("metric_value"):
+            metric += f" = {finding['metric_value']}"
+            if finding.get("unit"):
+                metric += f" {finding['unit']}"
+        parts.append(metric)
+    if finding.get("period"):
+        parts.append(f"({finding['period']})")
+    if finding.get("segment"):
+        parts.append(f"[{finding['segment']}]")
+    prefix = " ".join(parts)
+    text = finding["finding"]
+    if prefix:
+        return f"  - {prefix} — {text}"
+    return f"  - {text}"
+
+
 def _build_reference_index(
     combo_results: list[ComboSourceResult],
 ) -> tuple[list[dict], str]:
-    """Build a numbered reference index from structured findings.
+    """Build a deduplicated reference index from structured findings.
 
-    Assigns each finding a globally unique [REF:N] identifier,
-    grouped by source. Returns the entries list and a formatted
-    text block for the LLM prompt.
+    Findings sharing the same (filename, page, location_detail)
+    collapse to a single [REF:N] entry. Each entry groups all
+    findings at that evidence location so the LLM still has full
+    context to write the response.
 
     Params:
         combo_results: Research outputs with findings
@@ -45,51 +70,57 @@ def _build_reference_index(
         1
     """
     entries: list[dict] = []
-    lines: list[str] = []
+    location_to_entry: dict[tuple, dict] = {}
     ref_counter = 0
+
     for result in combo_results:
         source_label = result["source"]["data_source"]
         filename = result["source"]["filename"]
         bank = result["combo"]["bank"]
         period = result["combo"]["period"]
-        findings: list[ResearchFinding] = result.get("findings", [])
-        if not findings:
-            continue
-        lines.append(f"=== Source: {source_label} / {filename} ===")
-        lines.append(f"    Entity: {bank} | Document Period: {period}")
-        for finding in findings:
-            ref_counter += 1
-            entry: dict = {
-                "ref_id": ref_counter,
-                "finding": finding["finding"],
-                "page": finding["page"],
-                "location_detail": finding["location_detail"],
-                "source": source_label,
-                "entity": bank,
-            }
-            lines.append(f"[REF:{ref_counter}]")
-            lines.append(f"  Finding: {finding['finding']}")
+        for finding in result.get("findings", []):
+            page = finding["page"]
+            location = finding.get("location_detail", "")
+            key = (filename, page, location)
+            entry = location_to_entry.get(key)
+            if entry is None:
+                ref_counter += 1
+                entry = {
+                    "ref_id": ref_counter,
+                    "source": source_label,
+                    "filename": filename,
+                    "page": page,
+                    "location_detail": location,
+                    "entity": bank,
+                    "period": period,
+                    "findings": [],
+                }
+                entries.append(entry)
+                location_to_entry[key] = entry
+            entry["findings"].append(finding)
+
+    lines: list[str] = []
+    by_filename: dict[str, list[dict]] = {}
+    for entry in entries:
+        by_filename.setdefault(entry["filename"], []).append(entry)
+    for filename, file_entries in by_filename.items():
+        first = file_entries[0]
+        lines.append(f"=== Source: {first['source']} / {filename} ===")
+        lines.append(
+            f"    Entity: {first['entity']}"
+            f" | Document Period: {first['period']}"
+        )
+        for entry in file_entries:
+            location = entry["location_detail"]
+            location_str = f" - {location}" if location else ""
             lines.append(
-                f"  Page: {finding['page']}"
-                f" | Location: {finding['location_detail']}"
+                f"[REF:{entry['ref_id']}] Page {entry['page']}"
+                f"{location_str}"
             )
-            for key in ("metric_name", "metric_value", "period", "segment"):
-                value = finding.get(key, "")
-                if value:
-                    entry[key] = value
-            if finding.get("metric_name"):
-                lines.append(f"  Metric: {finding['metric_name']}")
-                metric_parts: list[str] = []
-                if finding.get("metric_value"):
-                    metric_parts.append(f"Value: {finding['metric_value']}")
-                if finding.get("period"):
-                    metric_parts.append(f"Period: {finding['period']}")
-                if finding.get("segment"):
-                    metric_parts.append(f"Segment: {finding['segment']}")
-                if metric_parts:
-                    lines.append(f"  {' | '.join(metric_parts)}")
-            entries.append(entry)
+            for finding in entry["findings"]:
+                lines.append(_format_finding_summary(finding))
         lines.append("")
+
     return entries, "\n".join(lines)
 
 
@@ -127,12 +158,10 @@ def _create_ref_replacer(
             state["invented_refs"].add(ref_id)
             return match.group(0)
         state["used_refs"].add(ref_id)
-        source = entry["source"]
-        page = entry["page"]
-        location = entry.get("location_detail", "")
-        if location:
-            return f"[{source}, Page {page} - {location}]"
-        return f"[{source}, Page {page}]"
+        filename = entry.get("filename", "")
+        page = entry.get("page", 0)
+        href = f"https://docs.local/files/{filename}#page={page}"
+        return f'<a href="{href}">[{ref_id}]</a>'
 
     def replace(chunk: str) -> str:
         """Replace [REF:N] in chunk, buffering partials."""
@@ -158,30 +187,265 @@ def _create_ref_replacer(
     }
 
 
-_SECTION_HEADING_RE = re.compile(r"^##\s+(\S+)", re.MULTILINE)
+_ADJACENT_DUP_RE = re.compile(r'(<a href="[^"]+">\[(\d+)\]</a>)(?:\1)+')
+
+
+def _dedup_adjacent_refs(text):
+    """Collapse adjacent duplicate citation anchors.
+
+    Params: text (str). Returns: str.
+    """
+    return _ADJACENT_DUP_RE.sub(r"\1", text)
+
+
+def _build_reference_appendix(entries, used_refs):
+    """Build a markdown reference index from used entries.
+
+    Params:
+        entries: Full reference entries list
+        used_refs: Set of ref_id ints that were actually cited
+
+    Returns:
+        str — formatted markdown section, or empty if no refs
+    """
+    if not used_refs:
+        return ""
+    lines = ["\n\n## References\n"]
+    lines.append("| # | Source | File | Page | Location |")
+    lines.append("|---|--------|------|------|----------|")
+    for entry in entries:
+        if entry["ref_id"] not in used_refs:
+            continue
+        ref_id = entry["ref_id"]
+        source = entry["source"]
+        filename = entry.get("filename", "")
+        page = entry["page"]
+        location = entry.get("location_detail", "")
+        lines.append(
+            f"| {ref_id} | {source} | {filename} | {page} | {location} |"
+        )
+    return "\n".join(lines)
+
+
+def _extract_metric_value_tokens(metric_value: str) -> list[str]:
+    """Extract searchable numeric tokens from a metric_value string.
+
+    Strips thousands separators, then matches digit groups with
+    optional % or bps unit. Used by the layer-2 coverage audit
+    to check whether a finding's value appears in the rendered
+    response.
+
+    Params: metric_value (str). Returns: list of token strings.
+    """
+    if not metric_value:
+        return []
+    normalized = metric_value.replace(",", "")
+    return _METRIC_TOKEN_RE.findall(normalized)
+
+
+def _finding_token_in_text(finding: dict, normalized_text: str) -> bool:
+    """Check whether any of a finding's metric tokens appear in text.
+
+    Qualitative findings (empty metric_value) return True — layer-2
+    cannot audit qualitative content; that responsibility rests with
+    the prompt rule.
+
+    Params: finding (dict), normalized_text (str — comma-stripped).
+    Returns: bool.
+    """
+    metric_value = finding.get("metric_value", "") or ""
+    tokens = _extract_metric_value_tokens(metric_value)
+    if not tokens:
+        return True
+    return any(tok in normalized_text for tok in tokens)
+
+
+def _compute_coverage_audit(
+    ref_entries: list[dict],
+    used_refs: set[int],
+    response_text: str,
+) -> dict:
+    """Run the two-layer coverage audit on a consolidation response.
+
+    Layer 1 detects refs that were never cited in the response.
+    Layer 2 detects findings inside cited refs whose numeric tokens
+    do not appear anywhere in the rendered response text.
+
+    Params:
+        ref_entries: Reference index entries from _build_reference_index
+        used_refs: Set of ref ids the LLM cited
+        response_text: Rendered response text (after ref replacement
+            and adjacent-ref dedup; before audit/appendix appending)
+
+    Returns:
+        dict with keys uncited_ref_ids (list[int]),
+        unincorporated_findings (list[dict]).
+
+    Example:
+        >>> audit = _compute_coverage_audit(entries, {1}, "text [1]")
+        >>> audit["uncited_ref_ids"]
+        [2]
+    """
+    uncited: list[int] = []
+    unincorporated: list[dict] = []
+    normalized_text = response_text.replace(",", "")
+    for entry in ref_entries:
+        ref_id = entry["ref_id"]
+        if ref_id not in used_refs:
+            uncited.append(ref_id)
+            continue
+        for finding in entry.get("findings", []):
+            if _finding_token_in_text(finding, normalized_text):
+                continue
+            unincorporated.append(
+                {
+                    "ref_id": ref_id,
+                    "source": entry.get("source", ""),
+                    "page": entry.get("page", 0),
+                    "location_detail": entry.get("location_detail", ""),
+                    "metric_name": finding.get("metric_name", "") or "",
+                    "metric_value": finding.get("metric_value", "") or "",
+                    "finding": finding.get("finding", "") or "",
+                }
+            )
+    uncited.sort()
+    return {
+        "uncited_ref_ids": uncited,
+        "unincorporated_findings": unincorporated,
+    }
+
+
+def _build_coverage_audit_section(
+    audit: dict,
+    ref_entries: list[dict],
+) -> str:
+    """Render coverage audit results as a markdown section.
+
+    Returns an empty string when there are no audit items so the
+    parent does not need to handle the no-op case.
+
+    Params: audit (dict from _compute_coverage_audit),
+        ref_entries (list[dict]).
+    Returns: str.
+    """
+    uncited = audit.get("uncited_ref_ids", [])
+    unincorporated = audit.get("unincorporated_findings", [])
+    if not uncited and not unincorporated:
+        return ""
+    entry_by_id = {e["ref_id"]: e for e in ref_entries}
+    lines = ["\n\n## Coverage audit\n"]
+    if uncited:
+        lines.append("### Uncited refs (never appeared in response)")
+        for ref_id in uncited:
+            entry = entry_by_id.get(ref_id, {})
+            source = entry.get("source", "")
+            page = entry.get("page", 0)
+            location = entry.get("location_detail", "")
+            loc_str = f" — {location}" if location else ""
+            lines.append(f"- [REF:{ref_id}] {source} p{page}{loc_str}")
+            for finding in entry.get("findings", []):
+                summary = _format_finding_summary(finding).lstrip(" -")
+                lines.append(f"    - {summary}")
+        lines.append("")
+    if unincorporated:
+        lines.append(
+            "### Unincorporated findings (ref cited but value absent)"
+        )
+        for item in unincorporated:
+            ref_id = item["ref_id"]
+            source = item["source"]
+            page = item["page"]
+            location = item["location_detail"]
+            loc_str = f" — {location}" if location else ""
+            metric_name = item["metric_name"]
+            metric_value = item["metric_value"]
+            label = (
+                f"{metric_name} = {metric_value}"
+                if metric_name
+                else (item["finding"][:120])
+            )
+            lines.append(
+                f"- [REF:{ref_id}] {source} p{page}{loc_str} — {label}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _process_consolidation_response(
+    full_text: str,
+    ref_entries: list[dict],
+    used_refs: set[int],
+    on_chunk: Callable[[str], None] | None,
+) -> dict:
+    """Apply post-LLM-call processing: dedup, audit, appendix, parse.
+
+    Factored out of consolidate_results to keep the parent function
+    below pylint's R0914 too-many-locals threshold while adding the
+    coverage audit step.
+
+    Params:
+        full_text: Raw LLM response with [REF:N] already replaced
+        ref_entries: Reference index entries
+        used_refs: Set of ref ids the LLM cited
+        on_chunk: Optional streaming callback for appended sections
+
+    Returns:
+        dict with full_text, sections, gap_list, key_findings,
+        uncited_ref_ids, unincorporated_findings keys.
+    """
+    full_text = _dedup_adjacent_refs(full_text)
+    audit = _compute_coverage_audit(ref_entries, used_refs, full_text)
+    audit_section = _build_coverage_audit_section(audit, ref_entries)
+    if audit_section:
+        full_text += audit_section
+        if on_chunk is not None:
+            on_chunk(audit_section)
+    appendix = _build_reference_appendix(ref_entries, used_refs)
+    if appendix:
+        full_text += appendix
+        if on_chunk is not None:
+            on_chunk(appendix)
+    sections = _parse_sections(full_text)
+    return {
+        "full_text": full_text,
+        "sections": sections,
+        "gap_list": _extract_gap_list(sections["gaps"]),
+        "key_findings": _extract_cited_sentences(sections["summary"]),
+        "uncited_ref_ids": audit["uncited_ref_ids"],
+        "unincorporated_findings": audit["unincorporated_findings"],
+    }
+
+
+_SECTION_HEADING_RE = re.compile(r"^##\s+(\S+)[^\n]*\n", re.MULTILINE)
 _SECTION_KEYS = {
     "Summary": "summary",
     "Metrics": "metrics",
     "Detail": "detail",
     "Gaps": "gaps",
+    "Coverage": "coverage_audit",
 }
 _NONE_IDENTIFIED_RE = re.compile(
     r"^\s*none\s+identified\.?\s*$", re.IGNORECASE
 )
 _MAX_KEY_FINDINGS = 5
+_METRIC_TOKEN_RE = re.compile(
+    r"\d+(?:\.\d+)?(?:%|\s*bps?)?",
+    re.IGNORECASE,
+)
 
 
 def _parse_sections(text: str) -> dict[str, str]:
     """Parse response text into sections by ## Heading markers.
 
     Params: text (str). Returns: dict with summary, metrics,
-    detail, gaps keys.
+    detail, gaps, coverage_audit keys.
     """
     result: dict[str, str] = {
         "summary": "",
         "metrics": "",
         "detail": "",
         "gaps": "",
+        "coverage_audit": "",
     }
     matches = list(_SECTION_HEADING_RE.finditer(text))
     if not matches:
@@ -413,9 +677,9 @@ def consolidate_results(
         full_text, usage = _fallback_call(llm, messages, prompt, replacer)
     llm_elapsed = perf_counter() - llm_start
 
-    sections = _parse_sections(full_text)
-    gap_list = _extract_gap_list(sections["gaps"])
-    key_findings = _extract_cited_sentences(sections["summary"])
+    processed = _process_consolidation_response(
+        full_text, ref_entries, replacer["used_refs"], on_chunk
+    )
     total_elapsed = perf_counter() - start_time
 
     _record_metrics(
@@ -424,31 +688,37 @@ def consolidate_results(
         llm_elapsed,
         combo_results,
         usage,
-        key_findings,
-        gap_list,
+        processed["key_findings"],
+        processed["gap_list"],
     )
     logger.info(
         "[%s] completed in %.1fs -- sources=%d, llm=%.1fs, "
-        "prompt_tokens=%d, key_findings=%d, data_gaps=%d",
+        "prompt_tokens=%d, key_findings=%d, data_gaps=%d, "
+        "uncited_refs=%d, unincorporated=%d",
         STAGE,
         total_elapsed,
         len(combo_results),
         llm_elapsed,
         usage["prompt_tokens"],
-        len(key_findings),
-        len(gap_list),
+        len(processed["key_findings"]),
+        len(processed["gap_list"]),
+        len(processed["uncited_ref_ids"]),
+        len(processed["unincorporated_findings"]),
     )
 
     return ConsolidatedResult(
         query=query,
         combo_results=combo_results,
-        consolidated_response=full_text,
-        key_findings=key_findings,
-        data_gaps=gap_list,
-        summary_answer=sections["summary"],
-        metrics_table=sections["metrics"],
-        detailed_summary=sections["detail"],
+        consolidated_response=processed["full_text"],
+        key_findings=processed["key_findings"],
+        data_gaps=processed["gap_list"],
+        summary_answer=processed["sections"]["summary"],
+        metrics_table=processed["sections"]["metrics"],
+        detailed_summary=processed["sections"]["detail"],
         reference_index=ref_entries,
+        coverage_audit=processed["sections"]["coverage_audit"],
+        uncited_ref_ids=processed["uncited_ref_ids"],
+        unincorporated_findings=processed["unincorporated_findings"],
     )
 
 

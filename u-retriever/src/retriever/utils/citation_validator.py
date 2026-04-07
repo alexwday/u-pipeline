@@ -102,6 +102,9 @@ def validate_consolidated_citations(
         "detailed_summary",
         "reference_index",
         "metrics",
+        "coverage_audit",
+        "uncited_ref_ids",
+        "unincorporated_findings",
     ):
         if optional_key in result:
             validated[optional_key] = result[optional_key]
