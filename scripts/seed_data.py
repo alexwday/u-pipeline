@@ -5,6 +5,13 @@ pgvector and tsvector columns through their text representations, so we
 do not need any per-column conversion logic. Files are written gzipped
 to keep them small enough to live alongside the source.
 
+Both dump and load use **explicit column lists** captured at dump time
+in columns.json. Without this, a destination table whose columns are in
+a different order than the source (e.g. because some columns were added
+via ALTER TABLE on the source after the original CREATE) will misalign
+COPY values across columns and fail with NOT NULL violations on the
+wrong column.
+
 CLI usage (from project root, inside the venv):
     python -m scripts.seed_data dump   # write seed files from current DB
     python -m scripts.seed_data load   # wipe and load seed files into DB
@@ -12,6 +19,7 @@ CLI usage (from project root, inside the venv):
 """
 
 import gzip
+import json
 import os
 import sys
 from pathlib import Path
@@ -22,6 +30,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SEED_DIR = PROJECT_ROOT / "scripts" / "seed-data"
+COLUMNS_FILE = SEED_DIR / "columns.json"
 ENV_PATH = PROJECT_ROOT / "u-ingestion" / ".env"
 
 # Tables in foreign-key load order. Children come after parents so
@@ -126,8 +135,46 @@ def count_rows(conn, schema: str) -> dict[str, int]:
     return counts
 
 
+def _table_columns(conn, schema: str, table: str) -> list[str]:
+    """Return a table's column names in ordinal_position order.
+
+    Params:
+        conn: psycopg2 connection
+        schema: PostgreSQL schema name
+        table: table name (unqualified)
+
+    Returns:
+        list of column names
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
+            """,
+            (schema, table),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def _read_columns_map() -> dict[str, list[str]]:
+    """Load the saved columns.json or return empty. Returns: dict."""
+    if not COLUMNS_FILE.exists():
+        return {}
+    return json.loads(COLUMNS_FILE.read_text(encoding="utf-8"))
+
+
 def dump(conn, schema: str) -> dict[str, int]:
     """Dump every seed table from the database to gzipped TSV files.
+
+    Captures each table's column list in ordinal-position order at
+    dump time and persists it to columns.json next to the TSVs, so
+    load() can replay the COPY with an explicit column list and
+    avoid order mismatches against destinations whose columns sit
+    in a different order (typically because some columns were added
+    via ALTER TABLE on the source after the original CREATE).
 
     Params:
         conn: psycopg2 connection
@@ -138,19 +185,35 @@ def dump(conn, schema: str) -> dict[str, int]:
     """
     SEED_DIR.mkdir(parents=True, exist_ok=True)
     written: dict[str, int] = {}
+    columns_map: dict[str, list[str]] = {}
     for table in TABLES_IN_LOAD_ORDER:
+        cols = _table_columns(conn, schema, table)
+        if not cols:
+            raise RuntimeError(
+                f"Table {schema}.{table} has no columns; aborting dump"
+            )
+        columns_map[table] = cols
+        col_list = ", ".join(cols)
         path = seed_file(table)
         with gzip.open(path, "wb") as gz:
             with conn.cursor() as cur:
-                cur.copy_expert(f"COPY {schema}.{table} TO STDOUT", gz)
+                cur.copy_expert(
+                    f"COPY {schema}.{table} ({col_list}) TO STDOUT",
+                    gz,
+                )
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {schema}.{table}")
             written[table] = cur.fetchone()[0]
         size_kb = path.stat().st_size / 1024
         print(
             f"  {table}: {written[table]} rows -> "
-            f"{path.name} ({size_kb:.1f} KB)"
+            f"{path.name} ({size_kb:.1f} KB, {len(cols)} cols)"
         )
+    COLUMNS_FILE.write_text(
+        json.dumps(columns_map, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"  columns map -> {COLUMNS_FILE.name}")
     return written
 
 
@@ -210,13 +273,24 @@ def load(conn, schema: str) -> dict[str, int]:
             t for t in TABLES_IN_LOAD_ORDER if not seed_file(t).exists()
         ]
         raise FileNotFoundError(f"Missing seed files for tables: {missing}")
+    columns_map = _read_columns_map()
     wipe(conn, schema)
     loaded: dict[str, int] = {}
     for table in TABLES_IN_LOAD_ORDER:
         path = seed_file(table)
+        cols = columns_map.get(table) or []
+        if not cols:
+            raise RuntimeError(
+                f"No column list for {table} in {COLUMNS_FILE.name}; "
+                "re-dump seed data with the current seed_data.py"
+            )
+        col_list = ", ".join(cols)
         with gzip.open(path, "rb") as gz:
             with conn.cursor() as cur:
-                cur.copy_expert(f"COPY {schema}.{table} FROM STDIN", gz)
+                cur.copy_expert(
+                    f"COPY {schema}.{table} ({col_list}) FROM STDIN",
+                    gz,
+                )
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {schema}.{table}")
             loaded[table] = cur.fetchone()[0]
