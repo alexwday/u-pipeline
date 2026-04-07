@@ -20,7 +20,9 @@ from retriever.stages.research import (
     _format_research_input,
     _order_chunks_by_page,
     _parse_research_response,
+    _sanitize_finding_metric_fields,
     _search_additional,
+    _split_metric_name_period_suffix,
     research_combo_source,
 )
 from retriever.utils.prompt_loader import load_prompt
@@ -907,6 +909,136 @@ def test_parse_research_response_malformed():
     }
     with pytest.raises(ValueError, match="findings"):
         _parse_research_response(bad_response)
+
+
+def test_split_metric_name_period_suffix_prior_quarter():
+    """'— prior quarter' suffix is stripped; period left untouched."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "CET1 ratio — prior quarter", "Q4 2025"
+    )
+    assert cleaned == "CET1 ratio"
+    assert period == "Q4 2025"
+    assert modified is True
+
+
+def test_split_metric_name_period_suffix_quarter_recovers_period():
+    """'— Q4/2025' suffix populates an empty period field."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "CET1 ratio — Q4/2025", ""
+    )
+    assert cleaned == "CET1 ratio"
+    assert period == "Q4 2025"
+    assert modified is True
+
+
+def test_split_metric_name_period_suffix_fy_recovers_period():
+    """'— FY2024' suffix populates an empty period field."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "Net income — FY2024", ""
+    )
+    assert cleaned == "Net income"
+    assert period == "FY 2024"
+    assert modified is True
+
+
+def test_split_metric_name_period_suffix_short_year_expanded():
+    """A 2-digit year ('Q4/25') expands to 4-digit."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "CET1 ratio — Q4/25", ""
+    )
+    assert cleaned == "CET1 ratio"
+    assert period == "Q4 2025"
+    assert modified is True
+
+
+def test_split_metric_name_period_suffix_no_match():
+    """A clean metric_name passes through unmodified."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "CET1 ratio", "Q1 2026"
+    )
+    assert cleaned == "CET1 ratio"
+    assert period == "Q1 2026"
+    assert modified is False
+
+
+def test_split_metric_name_period_suffix_yoy_only_strips():
+    """'— YoY' suffix is stripped; no derivable period."""
+    cleaned, period, modified = _split_metric_name_period_suffix(
+        "PPPT — YoY", "Q1 2026"
+    )
+    assert cleaned == "PPPT"
+    assert period == "Q1 2026"
+    assert modified is True
+
+
+def test_sanitize_finding_metric_fields_modifies_entry():
+    """Sanitizer mutates the finding entry in place."""
+    entry = ResearchFinding(
+        finding="text",
+        page=1,
+        location_detail="loc",
+        metric_name="CET1 ratio — Q4/2025",
+        metric_value="13.5",
+        unit="%",
+        period="",
+        segment="Enterprise",
+    )
+    modified = _sanitize_finding_metric_fields(entry)
+    assert modified is True
+    assert entry["metric_name"] == "CET1 ratio"
+    assert entry["period"] == "Q4 2025"
+
+
+def test_sanitize_finding_metric_fields_drops_empty_metric_name():
+    """A metric_name that becomes empty after stripping is removed."""
+    entry = ResearchFinding(
+        finding="text",
+        page=1,
+        location_detail="loc",
+        metric_name="— prior quarter",
+        metric_value="13.5",
+        unit="%",
+        period="Q4 2025",
+        segment="Enterprise",
+    )
+    modified = _sanitize_finding_metric_fields(entry)
+    assert modified is True
+    assert "metric_name" not in entry
+
+
+def test_sanitize_finding_metric_fields_no_metric_name_short_circuits():
+    """Sanitizer skips findings with no metric_name."""
+    entry = ResearchFinding(
+        finding="qualitative observation",
+        page=1,
+        location_detail="loc",
+    )
+    assert _sanitize_finding_metric_fields(entry) is False
+
+
+def test_parse_research_response_sanitizes_period_leak(caplog):
+    """Period leak in metric_name is repaired during parsing."""
+    response = _make_llm_response(
+        findings=[
+            {
+                "finding": "CET1 ratio prior quarter was 13.5%",
+                "page": 4,
+                "location_detail": "Capital",
+                "metric_name": "CET1 ratio — prior quarter",
+                "metric_value": "13.5",
+                "unit": "%",
+                "period": "Q4 2025",
+                "segment": "Enterprise",
+            }
+        ],
+        additional_queries=[],
+        confidence=0.9,
+    )
+    with caplog.at_level("WARNING"):
+        findings, _, _ = _parse_research_response(response)
+    assert findings[0]["metric_name"] == "CET1 ratio"
+    assert findings[0]["period"] == "Q4 2025"
+    assert any("Sanitized" in rec.message for rec in caplog.records)
 
 
 def test_parse_research_response_bad_types():

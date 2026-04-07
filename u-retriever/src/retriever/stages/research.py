@@ -37,6 +37,82 @@ STAGE = "5-RESEARCH"
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _MAX_ADDITIONAL_QUERIES = 3
 _SHEET_NAME_RE = re.compile(r"#\s*Sheet:\s*(.+?)(?:\n|$)")
+_METRIC_NAME_PERIOD_SUFFIX_RES = [
+    (
+        re.compile(
+            r"\s*[—–-]\s*prior\s+(?:quarter|year|period)\s*$",
+            re.IGNORECASE,
+        ),
+        None,
+    ),
+    (
+        re.compile(
+            r"\s*[—–-]\s*(q[1-4])\s*[/\s]\s*(\d{2,4})\s*$",
+            re.IGNORECASE,
+        ),
+        "quarter",
+    ),
+    (
+        re.compile(
+            r"\s*[—–-]\s*fy\s*(\d{2,4})\s*$",
+            re.IGNORECASE,
+        ),
+        "fy",
+    ),
+    (
+        re.compile(
+            r"\s*[—–-]\s*(?:yoy|qoq)(?:\s+change)?\s*$",
+            re.IGNORECASE,
+        ),
+        None,
+    ),
+]
+
+
+def _expand_short_year(year_token: str) -> str:
+    """Expand a 2-digit year to 4-digit (assumes 20XX)."""
+    if len(year_token) == 2:
+        return f"20{year_token}"
+    return year_token
+
+
+def _split_metric_name_period_suffix(
+    metric_name: str,
+    period: str,
+) -> tuple[str, str, bool]:
+    """Strip a period qualifier from metric_name and recover period.
+
+    Some research outputs bake the period qualifier into metric_name
+    (e.g. "CET1 ratio — prior quarter") in violation of research
+    rule 5. This sanitizer strips the suffix and, when the period
+    field is empty, derives a clean period token from the suffix.
+
+    Params: metric_name, period (str). Returns: tuple of
+    (cleaned metric_name, recovered period, was_modified bool).
+
+    Example:
+        >>> _split_metric_name_period_suffix("CET1 ratio — Q4/2025", "")
+        ('CET1 ratio', 'Q4 2025', True)
+    """
+    cleaned = metric_name
+    derived_period = ""
+    modified = False
+    for pattern, kind in _METRIC_NAME_PERIOD_SUFFIX_RES:
+        match = pattern.search(cleaned)
+        if not match:
+            continue
+        if kind == "quarter" and not derived_period:
+            quarter = match.group(1).upper()
+            year = _expand_short_year(match.group(2))
+            derived_period = f"{quarter} {year}"
+        elif kind == "fy" and not derived_period:
+            year = _expand_short_year(match.group(1))
+            derived_period = f"FY {year}"
+        cleaned = pattern.sub("", cleaned)
+        modified = True
+    cleaned = cleaned.strip()
+    final_period = period or derived_period
+    return cleaned, final_period, modified
 
 
 def _extract_sheet_name(chunk_header: str) -> str:
@@ -257,6 +333,85 @@ def _build_messages(
     return messages
 
 
+def _sanitize_finding_metric_fields(entry: ResearchFinding) -> bool:
+    """Strip period leaks from metric_name; populate period if empty.
+
+    Returns True when the entry was modified so callers can log a
+    warning. The sanitizer is a defensive backstop for research
+    rule 5 — the prompt forbids period qualifiers in metric_name,
+    but LLMs occasionally leak them anyway and the leak breaks the
+    downstream metrics aggregator's exact-match grouping.
+
+    Params: entry (ResearchFinding). Returns: bool.
+    """
+    metric_name = entry.get("metric_name", "")
+    if not metric_name:
+        return False
+    cleaned, recovered_period, modified = _split_metric_name_period_suffix(
+        metric_name, entry.get("period", "")
+    )
+    if not modified:
+        return False
+    if cleaned:
+        entry["metric_name"] = cleaned
+    else:
+        entry.pop("metric_name", None)
+    if recovered_period:
+        entry["period"] = recovered_period
+    return True
+
+
+def _parse_one_finding(item: dict) -> ResearchFinding:
+    """Validate and convert one raw finding dict into a ResearchFinding.
+
+    Params: item (dict). Returns: ResearchFinding.
+    """
+    if not isinstance(item, dict):
+        raise ValueError("each finding must be an object")
+    if "finding" not in item or not isinstance(item["finding"], str):
+        raise ValueError("finding.finding must be a string")
+    if "page" not in item or not isinstance(item["page"], (int, float)):
+        raise ValueError("finding.page must be an integer")
+    if "location_detail" not in item or not isinstance(
+        item["location_detail"], str
+    ):
+        raise ValueError("finding.location_detail must be a string")
+    entry = ResearchFinding(
+        finding=item["finding"],
+        page=int(item["page"]),
+        location_detail=item["location_detail"],
+    )
+    for optional_key in (
+        "metric_name",
+        "metric_value",
+        "unit",
+        "period",
+        "segment",
+    ):
+        value = item.get(optional_key, "")
+        if isinstance(value, str) and value:
+            entry[optional_key] = value
+    return entry
+
+
+def _parse_finding_list(
+    raw_findings: list,
+) -> tuple[list[ResearchFinding], int]:
+    """Parse and sanitize all raw findings.
+
+    Params: raw_findings (list). Returns: tuple of (findings,
+    sanitize_count).
+    """
+    findings: list[ResearchFinding] = []
+    sanitize_count = 0
+    for item in raw_findings:
+        entry = _parse_one_finding(item)
+        if _sanitize_finding_metric_fields(entry):
+            sanitize_count += 1
+        findings.append(entry)
+    return findings, sanitize_count
+
+
 def _parse_research_response(
     response: dict,
 ) -> tuple[list[ResearchFinding], list[str], float]:
@@ -278,34 +433,12 @@ def _parse_research_response(
     raw_findings = parsed["findings"]
     if not isinstance(raw_findings, list):
         raise ValueError("findings must be an array")
-    findings: list[ResearchFinding] = []
-    for item in raw_findings:
-        if not isinstance(item, dict):
-            raise ValueError("each finding must be an object")
-        if "finding" not in item or not isinstance(item["finding"], str):
-            raise ValueError("finding.finding must be a string")
-        if "page" not in item or not isinstance(item["page"], (int, float)):
-            raise ValueError("finding.page must be an integer")
-        if "location_detail" not in item or not isinstance(
-            item["location_detail"], str
-        ):
-            raise ValueError("finding.location_detail must be a string")
-        entry = ResearchFinding(
-            finding=item["finding"],
-            page=int(item["page"]),
-            location_detail=item["location_detail"],
+    findings, sanitize_count = _parse_finding_list(raw_findings)
+    if sanitize_count:
+        get_stage_logger(__name__, STAGE).warning(
+            "Sanitized %d finding(s) with period leak in metric_name",
+            sanitize_count,
         )
-        for optional_key in (
-            "metric_name",
-            "metric_value",
-            "unit",
-            "period",
-            "segment",
-        ):
-            value = item.get(optional_key, "")
-            if isinstance(value, str) and value:
-                entry[optional_key] = value
-        findings.append(entry)
     additional_queries = parsed.get("additional_queries", [])
     if not isinstance(additional_queries, list):
         raise ValueError("additional_queries must be a list")

@@ -682,6 +682,52 @@ def test_consolidate_fallback_without_stream(monkeypatch):
     llm.call.assert_called_once()
 
 
+def test_consolidate_passes_aggregated_metrics_to_llm(monkeypatch):
+    """The aggregated metrics inventory reaches the LLM user prompt."""
+    _set_env(monkeypatch)
+    combo_results = [_make_combo_result_with_findings()]
+    llm = MagicMock(spec=["call"])
+    llm.call.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "## Summary\n"
+                        "CET1 was 13.7% [REF:1].\n\n"
+                        "## Gaps\nNone identified\n"
+                    )
+                }
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 40,
+            "total_tokens": 120,
+        },
+    }
+
+    consolidate_results("CET1 ratio", combo_results, llm)
+
+    call_messages = llm.call.call_args.kwargs["messages"]
+    user_text = next(
+        msg["content"] for msg in call_messages if msg["role"] == "user"
+    )
+    assert "<aggregated_metrics>" in user_text
+    assert "[METRIC] CET1 Ratio" in user_text
+    assert "Q1 2026: 13.7" in user_text
+    assert "{aggregated_metrics}" not in user_text
+
+
+def test_consolidation_prompt_references_aggregated_metrics():
+    """Prompt instructs the LLM to render rows from the inventory."""
+    prompt = _load_consolidation_prompt()
+    flat = " ".join(prompt["user_prompt"].split())
+    assert "<aggregated_metrics>" in flat
+    assert "{aggregated_metrics}" in flat
+    assert "rendering each [METRIC] entry" in flat
+    assert "Do NOT split a single [METRIC] entry" in flat
+
+
 # -- F10: unit field in _format_finding_summary --
 
 

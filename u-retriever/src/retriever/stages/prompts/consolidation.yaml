@@ -21,6 +21,23 @@ user_prompt: >
   {reference_index}
   </reference_index>
 
+  <aggregated_metrics>
+  {aggregated_metrics}
+  </aggregated_metrics>
+
+  The aggregated_metrics block above is a deterministic
+  pre-aggregation of the quantitative findings. Each [METRIC]
+  entry is one candidate row for the Metrics table — periods
+  are already pivoted, sources are already merged, and
+  duplicate findings have already been collapsed. When
+  rendering the Metrics table, build rows directly from these
+  [METRIC] entries. Do NOT split a single [METRIC] entry into
+  multiple rows. Do NOT merge two [METRIC] entries into one
+  row — their entity, segment, line item, or unit differ on
+  purpose. Do NOT invent rows that have no [METRIC] entry.
+  If the aggregated_metrics block is empty, omit the Metrics
+  section entirely.
+
   Reminder — the query you must fully answer:
   <query>{query}</query>
 
@@ -36,6 +53,10 @@ user_prompt: >
 
   ## Metrics
   A markdown table comparing quantitative findings across sources.
+  Build this table by rendering each [METRIC] entry from the
+  aggregated_metrics block above as one row — that block has
+  already pivoted periods into columns and merged sources, so
+  the GROUP BY work is done.
   Columns: Entity | Segment | Line Item | Unit | then one
   column per period found in the data | Source (last column).
   Value columns contain ONLY the numeric value — no unit, no

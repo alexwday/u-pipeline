@@ -44,7 +44,16 @@ user_prompt: >
      - metric_name: the metric label verbatim from the source
        (do not normalize or rename). Do NOT append a
        parenthesized unit suffix — the unit goes in its own
-       field below.
+       field below. Do NOT append a period qualifier such as
+       "— prior quarter", "— Q4/2025", "— YoY", or "— QoQ" to
+       metric_name. Comparative-period values get their own
+       finding with the SAME metric_name and a different value
+       in the period field. Bad: metric_name
+       "CET1 ratio — prior quarter". Good: metric_name
+       "CET1 ratio" with period "Q4 2025". The aggregator
+       downstream pivots periods into table columns by exact
+       metric_name match — period leaks in metric_name break
+       that pivot and produce duplicate rows.
      - metric_value: the numeric value as stated in the
        source, WITHOUT the unit (the unit goes in the
        separate unit field below). For a cell showing

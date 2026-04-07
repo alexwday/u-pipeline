@@ -17,6 +17,7 @@ from ..utils.llm_connector import (
     get_usage_metrics,
 )
 from ..utils.logging_setup import get_stage_logger
+from ..utils.metrics_aggregator import build_metrics_inventory
 from ..utils.prompt_loader import load_prompt
 
 STAGE = "6-CONSOLIDATION"
@@ -490,11 +491,16 @@ def _extract_cited_sentences(summary: str) -> list[str]:
     return sentences
 
 
-def _build_messages(prompt: dict, query: str, ref_text: str) -> list[dict]:
+def _build_messages(
+    prompt: dict,
+    query: str,
+    ref_text: str,
+    inventory_text: str,
+) -> list[dict]:
     """Build system + user messages for the consolidation call.
 
-    Params: prompt (dict), query (str), ref_text (str).
-    Returns: list[dict].
+    Params: prompt (dict), query (str), ref_text (str),
+    inventory_text (str). Returns: list[dict].
     """
     messages: list[dict] = []
     if prompt.get("system_prompt"):
@@ -502,6 +508,7 @@ def _build_messages(prompt: dict, query: str, ref_text: str) -> list[dict]:
     user_text = prompt["user_prompt"]
     user_text = user_text.replace("{query}", query)
     user_text = user_text.replace("{reference_index}", ref_text)
+    user_text = user_text.replace("{aggregated_metrics}", inventory_text)
     messages.append({"role": "user", "content": user_text})
     return messages
 
@@ -664,8 +671,9 @@ def consolidate_results(
             metrics,
         )
 
+    inventory_text = build_metrics_inventory(combo_results)
     prompt = load_prompt("consolidation", prompts_dir=_PROMPTS_DIR)
-    messages = _build_messages(prompt, query, ref_text)
+    messages = _build_messages(prompt, query, ref_text, inventory_text)
     replacer = _create_ref_replacer(ref_entries)
 
     llm_start = perf_counter()
