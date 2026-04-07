@@ -6,6 +6,7 @@ from pathlib import Path
 
 from flask import Flask
 from retriever.utils.config_setup import load_config
+from retriever.utils.ssl_setup import setup_ssl
 
 from .api.queries import queries_bp
 from .api.retrieval import retrieval_bp
@@ -41,6 +42,7 @@ def create_app() -> Flask:
 def main() -> None:
     """Run the debug server."""
     load_config()
+    setup_ssl()
 
     logging.basicConfig(
         level=logging.INFO,

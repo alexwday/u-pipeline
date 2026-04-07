@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from ingestion.utils.postgres_connector import ensure_schema_objects
 from retriever.utils.config_setup import load_config
 from retriever.utils.llm_connector import LLMClient
+from retriever.utils.ssl_setup import setup_ssl
 from scripts import seed_data
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -101,8 +102,20 @@ def _test_database(config: dict) -> bool:
 
 
 def _test_llm() -> bool:
-    """Test LLM connectivity via the retriever client. Returns: bool."""
+    """Test LLM connectivity via the retriever client.
+
+    Mirrors retriever.stages.startup.run_startup: loads config,
+    installs the rbc_security corporate CA bundle (if available)
+    via setup_ssl, then exercises the LLMClient health check.
+    Without setup_ssl, the OpenAI HTTPS handshake against the
+    work LLM endpoint fails on machines that need the corporate
+    CA injected.
+
+    Returns:
+        True if the connection test succeeds
+    """
     load_config()
+    setup_ssl()
     try:
         llm = LLMClient()
         llm.test_connection()
