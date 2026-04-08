@@ -520,7 +520,9 @@ def test_llm_call_with_retry_retries_then_succeeds(monkeypatch):
         DummyRetryable("retry"),
         _make_visual_response("ok"),
     ]
-    monkeypatch.setattr(xlsx_module, "RETRYABLE_ERRORS", (DummyRetryable,))
+    monkeypatch.setattr(
+        xlsx_module, "_PARSE_RETRYABLE_ERRORS", (DummyRetryable,)
+    )
     monkeypatch.setattr(xlsx_module, "get_xlsx_vision_max_retries", lambda: 2)
     monkeypatch.setattr(
         xlsx_module,
@@ -540,6 +542,89 @@ def test_llm_call_with_retry_retries_then_succeeds(monkeypatch):
     assert getattr(llm.call, "call_count") == 2
 
 
+def test_llm_call_with_retry_retries_on_missing_tool_calls(monkeypatch):
+    """Retry when the model returns an empty tool_calls payload."""
+    bad_response = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"tool_calls": None, "content": "oops"},
+            }
+        ]
+    }
+
+    llm = Mock()
+    llm.call.side_effect = [bad_response, _make_visual_response("ok")]
+    monkeypatch.setattr(xlsx_module, "get_xlsx_vision_max_retries", lambda: 2)
+    monkeypatch.setattr(
+        xlsx_module,
+        "get_xlsx_vision_retry_delay",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(xlsx_module.time, "sleep", lambda _seconds: None)
+
+    result = getattr(xlsx_module, "_llm_call_with_retry")(
+        llm,
+        [{"role": "user", "content": "hi"}],
+        {"stage": "extraction", "tools": [], "tool_choice": "required"},
+        "sheet image",
+    )
+
+    assert result == "ok"
+    assert getattr(llm.call, "call_count") == 2
+
+
+def test_llm_call_with_retry_raises_value_error_after_exhausted_retries(
+    monkeypatch,
+):
+    """Raise ValueError when every retry returns a missing-tool-calls body."""
+    bad_response = {
+        "choices": [{"message": {"tool_calls": None, "content": "still bad"}}]
+    }
+
+    llm = Mock()
+    llm.call.side_effect = [bad_response, bad_response]
+    monkeypatch.setattr(xlsx_module, "get_xlsx_vision_max_retries", lambda: 2)
+    monkeypatch.setattr(
+        xlsx_module,
+        "get_xlsx_vision_retry_delay",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(xlsx_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ValueError, match="missing tool calls"):
+        getattr(xlsx_module, "_llm_call_with_retry")(
+            llm,
+            [{"role": "user", "content": "hi"}],
+            {"stage": "extraction", "tools": [], "tool_choice": "required"},
+            "sheet image",
+        )
+    assert getattr(llm.call, "call_count") == 2
+
+
+def test_parse_visual_response_missing_tool_calls_includes_diagnostics():
+    """Enriched missing-tool-calls error includes finish_reason and preview."""
+    response = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {
+                    "tool_calls": None,
+                    "content": "truncated thinking...",
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        getattr(xlsx_module, "_parse_visual_response")(response)
+
+    message = str(exc_info.value)
+    assert "missing tool calls" in message
+    assert "finish_reason=length" in message
+    assert "truncated thinking" in message
+
+
 def test_llm_call_with_retry_raises_after_final_retry(monkeypatch):
     """Raise the last retryable error after exhausting retries."""
 
@@ -548,7 +633,9 @@ def test_llm_call_with_retry_raises_after_final_retry(monkeypatch):
 
     llm = Mock()
     llm.call.side_effect = DummyRetryable("retry")
-    monkeypatch.setattr(xlsx_module, "RETRYABLE_ERRORS", (DummyRetryable,))
+    monkeypatch.setattr(
+        xlsx_module, "_PARSE_RETRYABLE_ERRORS", (DummyRetryable,)
+    )
     monkeypatch.setattr(xlsx_module, "get_xlsx_vision_max_retries", lambda: 1)
     monkeypatch.setattr(
         xlsx_module,

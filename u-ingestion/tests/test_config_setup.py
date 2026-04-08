@@ -245,6 +245,9 @@ def test_get_processor_retry_config(monkeypatch):
     assert config_setup.get_pptx_vision_max_retries() == 3
     assert config_setup.get_pptx_vision_retry_delay() == 2.0
 
+    assert config_setup.get_content_extraction_max_retries() == 3
+    assert config_setup.get_content_extraction_retry_delay() == 2.0
+
     monkeypatch.setenv("PDF_VISION_MAX_RETRIES", "5")
     assert config_setup.get_pdf_vision_max_retries() == 5
 
@@ -261,6 +264,11 @@ def test_get_processor_retry_config(monkeypatch):
         match="PDF_VISION_RETRY_DELAY_SECONDS must be >= 0.0",
     ):
         config_setup.get_pdf_vision_retry_delay()
+
+    monkeypatch.setenv("CONTENT_EXTRACTION_MAX_RETRIES", "5")
+    assert config_setup.get_content_extraction_max_retries() == 5
+    monkeypatch.setenv("CONTENT_EXTRACTION_RETRY_DELAY_SECONDS", "0.5")
+    assert config_setup.get_content_extraction_retry_delay() == 0.5
 
 
 def test_get_chunking_embedding_token_limit_default_and_override(

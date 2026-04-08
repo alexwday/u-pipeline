@@ -457,7 +457,9 @@ def test_extract_page_retries_then_succeeds(monkeypatch):
             ]
         },
     ]
-    monkeypatch.setattr(pptx_module, "RETRYABLE_ERRORS", (DummyRetryable,))
+    monkeypatch.setattr(
+        pptx_module, "_PARSE_RETRYABLE_ERRORS", (DummyRetryable,)
+    )
     monkeypatch.setattr(pptx_module, "get_pptx_vision_max_retries", lambda: 2)
     monkeypatch.setattr(
         pptx_module,
@@ -477,6 +479,98 @@ def test_extract_page_retries_then_succeeds(monkeypatch):
     assert getattr(llm.call, "call_count") == 2
 
 
+def test_extract_page_retries_on_missing_tool_calls(monkeypatch):
+    """Retry when the model returns an empty tool_calls payload."""
+    bad_response = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"tool_calls": None, "content": "oops"},
+            }
+        ]
+    }
+    good_response = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {"function": {"arguments": '{"content": "ok"}'}}
+                    ]
+                }
+            }
+        ]
+    }
+
+    llm = Mock()
+    llm.call.side_effect = [bad_response, good_response]
+    monkeypatch.setattr(pptx_module, "get_pptx_vision_max_retries", lambda: 2)
+    monkeypatch.setattr(
+        pptx_module,
+        "get_pptx_vision_retry_delay",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(pptx_module.time, "sleep", lambda _seconds: None)
+
+    result = pptx_module.extract_page(
+        llm=llm,
+        img_bytes=b"img",
+        prompt=_mock_prompt(),
+        context="deck.pptx slide 1/1",
+    )
+
+    assert result == "ok"
+    assert getattr(llm.call, "call_count") == 2
+
+
+def test_extract_page_raises_value_error_after_exhausted_retries(monkeypatch):
+    """Raise ValueError when every retry returns a missing-tool-calls body."""
+    bad_response = {
+        "choices": [{"message": {"tool_calls": None, "content": "still bad"}}]
+    }
+
+    llm = Mock()
+    llm.call.side_effect = [bad_response, bad_response]
+    monkeypatch.setattr(pptx_module, "get_pptx_vision_max_retries", lambda: 2)
+    monkeypatch.setattr(
+        pptx_module,
+        "get_pptx_vision_retry_delay",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(pptx_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ValueError, match="missing tool calls"):
+        pptx_module.extract_page(
+            llm=llm,
+            img_bytes=b"img",
+            prompt=_mock_prompt(),
+            context="deck.pptx slide 1/1",
+        )
+    assert getattr(llm.call, "call_count") == 2
+
+
+def test_parse_extraction_response_missing_tool_calls_includes_diagnostics():
+    """Enriched missing-tool-calls error includes finish_reason and preview."""
+    response = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {
+                    "tool_calls": None,
+                    "content": "truncated thinking...",
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        pptx_module.parse_extraction_response(response)
+
+    message = str(exc_info.value)
+    assert "missing tool calls" in message
+    assert "finish_reason=length" in message
+    assert "truncated thinking" in message
+
+
 def test_extract_page_raises_after_final_retry(monkeypatch):
     """Raise the last retryable error after exhausting retries."""
 
@@ -485,7 +579,9 @@ def test_extract_page_raises_after_final_retry(monkeypatch):
 
     llm = Mock()
     llm.call.side_effect = DummyRetryable("retry")
-    monkeypatch.setattr(pptx_module, "RETRYABLE_ERRORS", (DummyRetryable,))
+    monkeypatch.setattr(
+        pptx_module, "_PARSE_RETRYABLE_ERRORS", (DummyRetryable,)
+    )
     monkeypatch.setattr(pptx_module, "get_pptx_vision_max_retries", lambda: 1)
     monkeypatch.setattr(
         pptx_module,

@@ -119,10 +119,11 @@ def _patch_dependencies(
     monkeypatch,
     items_per_call=None,
     budget=50000,
+    max_retries=1,
 ):
     """Patch load_prompt and config for all tests.
 
-    Params: monkeypatch, items_per_call, budget.
+    Params: monkeypatch, items_per_call, budget, max_retries.
     Returns: dict of mocks.
     """
     prompt = _stub_prompt()
@@ -137,6 +138,17 @@ def _patch_dependencies(
         "get_content_extraction_batch_budget",
         lambda: budget,
     )
+    monkeypatch.setattr(
+        mod,
+        "get_content_extraction_max_retries",
+        lambda: max_retries,
+    )
+    monkeypatch.setattr(
+        mod,
+        "get_content_extraction_retry_delay",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         mod,
         "count_message_tokens",
@@ -1028,3 +1040,214 @@ def test_extract_content_calls_with_correct_stage(
     mod.extract_content(result, mocks["llm"])
 
     assert mocks["call_log"][0]["stage"] == ("content_extraction")
+
+
+# ------------------------------------------------------------------
+# Retry behavior on structural LLM failures
+# ------------------------------------------------------------------
+
+
+def _bad_response(finish_reason="", content=""):
+    """Build a response with no tool_calls for retry tests."""
+    return {
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "message": {"tool_calls": None, "content": content},
+            }
+        ]
+    }
+
+
+def test_parse_extraction_response_missing_tool_calls_includes_diagnostics():
+    """Enriched missing-tool-calls error includes finish_reason and preview."""
+    response = _bad_response(
+        finish_reason="length",
+        content="truncated thinking...",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        mod.parse_extraction_response(response)
+
+    message = str(exc_info.value)
+    assert "no tool calls" in message
+    assert "finish_reason=length" in message
+    assert "truncated thinking" in message
+
+
+def test_extract_content_retries_on_missing_tool_calls(monkeypatch):
+    """Retry when the LLM drops tool_calls, then succeed on next attempt."""
+    good_items = [
+        {
+            "unit_id": "1",
+            "keywords": ["alpha"],
+            "entities": [],
+        },
+    ]
+
+    responses = [
+        _bad_response(finish_reason="length", content="oops"),
+        _make_llm_response(good_items),
+    ]
+    call_count = [0]
+
+    def fake_call(**_kwargs):
+        idx = call_count[0]
+        call_count[0] += 1
+        return responses[idx]
+
+    prompt = _stub_prompt()
+    monkeypatch.setattr(
+        mod, "load_prompt", lambda name, prompts_dir=None: prompt
+    )
+    monkeypatch.setattr(
+        mod, "get_content_extraction_batch_budget", lambda: 50000
+    )
+    monkeypatch.setattr(mod, "get_content_extraction_max_retries", lambda: 2)
+    monkeypatch.setattr(mod, "get_content_extraction_retry_delay", lambda: 0.0)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        mod,
+        "count_message_tokens",
+        lambda messages: messages[1]["content"].count("<unit ") * 100,
+    )
+
+    llm = type(
+        "FakeLLM",
+        (),
+        {"call": staticmethod(fake_call), "__doc__": "Fake."},
+    )()
+    result = _make_result(pages=[_make_page("Page one", page_number=1)])
+
+    enriched = mod.extract_content(result, llm)
+
+    assert call_count[0] == 2
+    assert enriched.pages[0].keywords == ["alpha"]
+
+
+def test_extract_content_retries_on_duplicate_unit_id(monkeypatch):
+    """Retry when the LLM emits duplicate unit_ids, then succeed."""
+    bad_items = [
+        {"unit_id": "1", "keywords": ["a"], "entities": []},
+        {"unit_id": "1", "keywords": ["b"], "entities": []},
+    ]
+    good_items = [
+        {"unit_id": "1", "keywords": ["ok"], "entities": []},
+    ]
+
+    responses = [
+        _make_llm_response(bad_items),
+        _make_llm_response(good_items),
+    ]
+    call_count = [0]
+
+    def fake_call(**_kwargs):
+        idx = call_count[0]
+        call_count[0] += 1
+        return responses[idx]
+
+    prompt = _stub_prompt()
+    monkeypatch.setattr(
+        mod, "load_prompt", lambda name, prompts_dir=None: prompt
+    )
+    monkeypatch.setattr(
+        mod, "get_content_extraction_batch_budget", lambda: 50000
+    )
+    monkeypatch.setattr(mod, "get_content_extraction_max_retries", lambda: 2)
+    monkeypatch.setattr(mod, "get_content_extraction_retry_delay", lambda: 0.0)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        mod,
+        "count_message_tokens",
+        lambda messages: messages[1]["content"].count("<unit ") * 100,
+    )
+
+    llm = type(
+        "FakeLLM",
+        (),
+        {"call": staticmethod(fake_call), "__doc__": "Fake."},
+    )()
+    result = _make_result(pages=[_make_page("Page one", page_number=1)])
+
+    enriched = mod.extract_content(result, llm)
+
+    assert call_count[0] == 2
+    assert enriched.pages[0].keywords == ["ok"]
+
+
+def test_extract_content_raises_after_exhausted_retries(monkeypatch):
+    """Raise ValueError when every retry returns the same bad response."""
+    bad_items = [
+        {"unit_id": "1", "keywords": ["a"], "entities": []},
+        {"unit_id": "1", "keywords": ["b"], "entities": []},
+    ]
+    mocks = _patch_dependencies(
+        monkeypatch,
+        items_per_call=[bad_items],
+        max_retries=2,
+    )
+    result = _make_result(pages=[_make_page("Page one", page_number=1)])
+
+    with pytest.raises(ValueError, match="duplicate unit_id"):
+        mod.extract_content(result, mocks["llm"])
+    assert len(mocks["call_log"]) == 2
+
+
+def test_call_with_retry_raises_when_retry_loop_never_runs(monkeypatch):
+    """Guard against a zero-retry configuration for content extraction."""
+    monkeypatch.setattr(mod, "get_content_extraction_max_retries", lambda: 0)
+    monkeypatch.setattr(mod, "get_content_extraction_retry_delay", lambda: 0.0)
+
+    with pytest.raises(
+        RuntimeError, match="exited retry loop without a response"
+    ):
+        mod.call_with_retry(
+            type("FakeLLM", (), {"call": staticmethod(lambda **_: {})})(),
+            [{"role": "user", "content": "hi"}],
+            _stub_prompt(),
+            [{"unit_id": "1"}],
+            "content_extraction:doc.pdf:batch_1",
+        )
+
+
+def test_call_with_retry_logs_attempt_number_in_context(monkeypatch):
+    """Each retry attempt is tagged with an attempt_N suffix in the context."""
+    responses = [
+        _bad_response(content="first"),
+        _make_llm_response(
+            [{"unit_id": "1", "keywords": ["ok"], "entities": []}]
+        ),
+    ]
+    call_count = [0]
+    contexts: list[str] = []
+
+    def fake_call(**kwargs):
+        contexts.append(kwargs.get("context", ""))
+        idx = call_count[0]
+        call_count[0] += 1
+        return responses[idx]
+
+    monkeypatch.setattr(mod, "get_content_extraction_max_retries", lambda: 2)
+    monkeypatch.setattr(mod, "get_content_extraction_retry_delay", lambda: 0.0)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    llm = type(
+        "FakeLLM",
+        (),
+        {"call": staticmethod(fake_call), "__doc__": "Fake."},
+    )()
+
+    batch = [{"unit_id": "1"}]
+    result = mod.call_with_retry(
+        llm,
+        [{"role": "user", "content": "hi"}],
+        _stub_prompt(),
+        batch,
+        "content_extraction:doc.pdf:batch_1",
+    )
+
+    assert result == {"1": {"keywords": ["ok"], "entities": []}}
+    assert contexts == [
+        "content_extraction:doc.pdf:batch_1:attempt_1",
+        "content_extraction:doc.pdf:batch_1:attempt_2",
+    ]

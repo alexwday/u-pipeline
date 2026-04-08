@@ -38,6 +38,8 @@ RETRYABLE_ERRORS = (
     openai.InternalServerError,
 )
 
+_PARSE_RETRYABLE_ERRORS = RETRYABLE_ERRORS + (ValueError,)
+
 _VISUAL_SERIES_POINT_LIMIT = 12
 _IMAGE_MEDIA_TYPES = {
     "gif": "image/gif",
@@ -485,13 +487,19 @@ def _parse_visual_response(response: dict) -> str:
     if not isinstance(choices, list) or not choices:
         raise ValueError("LLM response missing choices")
 
+    finish_reason = choices[0].get("finish_reason", "")
     message = choices[0].get("message")
     if not isinstance(message, dict):
         raise ValueError("LLM response missing message payload")
 
     tool_calls = message.get("tool_calls")
     if not isinstance(tool_calls, list) or not tool_calls:
-        raise ValueError("LLM response missing tool calls")
+        content_preview = str(message.get("content", ""))[:200]
+        raise ValueError(
+            f"LLM response missing tool calls "
+            f"(finish_reason={finish_reason}, "
+            f"content={content_preview!r})"
+        )
 
     function_data = tool_calls[0].get("function")
     if not isinstance(function_data, dict):
@@ -541,7 +549,7 @@ def _llm_call_with_retry(
                 context=context,
             )
             return _parse_visual_response(response)
-        except RETRYABLE_ERRORS as exc:
+        except _PARSE_RETRYABLE_ERRORS as exc:
             if attempt == max_retries:
                 logger.error(
                     "%s failed after %d retries: %s",

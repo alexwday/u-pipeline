@@ -8,10 +8,17 @@ batched by token budget to minimize LLM calls.
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
-from ...utils.config_setup import get_content_extraction_batch_budget
+import openai
+
+from ...utils.config_setup import (
+    get_content_extraction_batch_budget,
+    get_content_extraction_max_retries,
+    get_content_extraction_retry_delay,
+)
 from ...utils.file_types import ExtractionResult, get_content_unit_id
 from ...utils.llm_connector import LLMClient
 from ...utils.logging_setup import get_stage_logger
@@ -25,6 +32,14 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 _SHEET_NAME_RE = re.compile(r"^#\s+Sheet:\s+(.+)$", re.MULTILINE)
 _HEADING_RE = re.compile(r"^#+\s+(.+)$", re.MULTILINE)
+
+_RETRYABLE_ERRORS = (
+    openai.RateLimitError,
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.InternalServerError,
+    ValueError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -222,10 +237,16 @@ def _parse_extraction_response(
     if not choices:
         raise ValueError("LLM response contains no choices")
 
+    finish_reason = choices[0].get("finish_reason", "")
     message = choices[0].get("message", {})
     tool_calls = message.get("tool_calls")
     if not tool_calls:
-        raise ValueError("LLM response contains no tool calls")
+        content_preview = str(message.get("content", ""))[:200]
+        raise ValueError(
+            f"LLM response contains no tool calls "
+            f"(finish_reason={finish_reason}, "
+            f"content={content_preview!r})"
+        )
 
     args_raw = tool_calls[0].get("function", {}).get("arguments", "")
     try:
@@ -371,6 +392,70 @@ def _build_content_units(result: ExtractionResult) -> list[dict]:
     return content_units
 
 
+def _call_with_retry(
+    llm: LLMClient,
+    messages: list,
+    prompt: dict[str, Any],
+    batch: list[dict],
+    context: str,
+) -> dict[str, dict]:
+    """Call LLM for one batch with retry on transient and structural errors.
+
+    Wraps llm.call + _parse_extraction_response + _validate_batch_results
+    so that missing tool_calls, duplicate unit_ids, and batch-id
+    mismatches — all known nondeterministic LLM failure modes — survive
+    bounded retries instead of killing the whole file. Note: retrying at
+    temperature=0 is unlikely to recover from deterministic failures;
+    operators can bump CONTENT_EXTRACTION_MAX_RETRIES if observation
+    shows retries aren't helping.
+
+    Params:
+        llm: LLMClient instance
+        messages: Message list for the API call
+        prompt: Loaded content_extraction prompt
+        batch: Content-unit batch for validation
+        context: Log label for the request
+
+    Returns:
+        dict[str, dict] -- parsed unit_id -> {keywords, entities}
+    """
+    max_retries = get_content_extraction_max_retries()
+    retry_delay = get_content_extraction_retry_delay()
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm.call(
+                messages=messages,
+                stage="content_extraction",
+                tools=prompt.get("tools"),
+                tool_choice=prompt.get("tool_choice"),
+                context=f"{context}:attempt_{attempt}",
+            )
+            batch_results = _parse_extraction_response(response)
+            _validate_batch_results(batch, batch_results)
+            return batch_results
+        except _RETRYABLE_ERRORS as exc:
+            if attempt == max_retries:
+                logger.error(
+                    "%s failed after %d retries: %s",
+                    context,
+                    max_retries,
+                    exc,
+                )
+                raise
+            wait = retry_delay * attempt
+            logger.warning(
+                "%s retry %d/%d after %.1fs: %s",
+                context,
+                attempt,
+                max_retries,
+                wait,
+                exc,
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"{context} exited retry loop without a response")
+
+
 def extract_content(
     result: ExtractionResult,
     llm: LLMClient,
@@ -419,19 +504,18 @@ def extract_content(
             },
             {"role": "user", "content": user_message},
         ]
-        response = llm.call(
-            messages=messages,
-            stage="content_extraction",
-            tools=prompt.get("tools"),
-            tool_choice=prompt.get("tool_choice"),
-            context=(
-                f"content_extraction:"
-                f"{Path(result.file_path).name}:"
-                f"batch_{batch_idx + 1}"
-            ),
+        batch_context = (
+            f"content_extraction:"
+            f"{Path(result.file_path).name}:"
+            f"batch_{batch_idx + 1}"
         )
-        batch_results = _parse_extraction_response(response)
-        _validate_batch_results(batch, batch_results)
+        batch_results = _call_with_retry(
+            llm,
+            messages,
+            prompt,
+            batch,
+            batch_context,
+        )
         all_extractions.update(batch_results)
 
     _apply_to_pages(result, all_extractions)
@@ -464,3 +548,4 @@ validate_batch_results = _validate_batch_results
 apply_to_pages = _apply_to_pages
 build_doc_context = _build_doc_context
 build_content_units = _build_content_units
+call_with_retry = _call_with_retry

@@ -676,6 +676,30 @@ def get_content_extraction_batch_budget() -> int:
     )
 
 
+def get_content_extraction_max_retries() -> int:
+    """Get max retries for content extraction batch calls.
+
+    Returns: int — default 3.
+    """
+    return _get_int_env(
+        "CONTENT_EXTRACTION_MAX_RETRIES",
+        default="3",
+        minimum=1,
+    )
+
+
+def get_content_extraction_retry_delay() -> float:
+    """Get base backoff delay for content extraction retries.
+
+    Returns: float — default 2.0.
+    """
+    return _get_float_env(
+        "CONTENT_EXTRACTION_RETRY_DELAY_SECONDS",
+        default="2.0",
+        minimum=0.0,
+    )
+
+
 def get_section_summary_batch_budget() -> int:
     """Token budget per batch for section summarization.
 
