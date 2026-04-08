@@ -41,6 +41,23 @@ user_prompt: >
   6. Use the progressive table of contents to understand
      document context and avoid redundancy across sections.
 
+  7. Return the exact section_id from the input for each
+     item. Every section_id in the input MUST appear in
+     the output exactly once — never skip a section and
+     never repeat a section_id. The number of items in
+     your output array MUST equal the number of <section>
+     blocks in the input. If two adjacent sections look
+     similar, they are still separate sections and must
+     each get their own output entry with their own
+     section_id.
+
+  8. If a section's content is sparse or unclear, still
+     include it in the output with a best-effort summary
+     and whatever keywords and entities you can extract
+     (empty arrays are acceptable). Never omit a section
+     from the output — omission is treated as a hard
+     failure.
+
 tool_choice: required
 
 tools:
@@ -64,7 +81,11 @@ tools:
                 section_id:
                   type: string
                   description: >
-                    Section identifier from the input.
+                    The section identifier copied verbatim
+                    from the input <section id="..."
+                    attribute. Each input section_id must
+                    appear exactly once across the items
+                    array — duplicates are rejected.
                 summary:
                   type: string
                   description: >
@@ -96,7 +117,9 @@ tools:
               additionalProperties: false
             description: >
               Summary and refined metadata for each section
-              in the batch.
+              in the batch. The array length MUST equal the
+              number of input sections and every input
+              section_id must appear exactly once.
           rationale:
             type: string
             description: >

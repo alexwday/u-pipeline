@@ -375,7 +375,7 @@ def test_enrichment_config_defaults_and_overrides(monkeypatch):
     assert config_setup.get_subsection_token_threshold() == 15000
 
     monkeypatch.delenv("CONTENT_EXTRACTION_BATCH_BUDGET", raising=False)
-    assert config_setup.get_content_extraction_batch_budget() == 60000
+    assert config_setup.get_content_extraction_batch_budget() == 30000
 
     monkeypatch.delenv("SECTION_SUMMARY_BATCH_BUDGET", raising=False)
     assert config_setup.get_section_summary_batch_budget() == 80000

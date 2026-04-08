@@ -667,11 +667,15 @@ def get_subsection_token_threshold() -> int:
 def get_content_extraction_batch_budget() -> int:
     """Token budget per batch for keyword/entity extraction.
 
-    Returns: int — default 60000.
+    Lowered from 60000 to 30000 to cap batches at ~20 units,
+    which dramatically reduces the rate of LLM positional
+    drift producing duplicate unit_ids on large batches.
+
+    Returns: int — default 30000.
     """
     return _get_int_env(
         "CONTENT_EXTRACTION_BATCH_BUDGET",
-        default="60000",
+        default="30000",
         minimum=1000,
     )
 

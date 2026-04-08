@@ -40,23 +40,35 @@ user_prompt: >
      significant row labels or values as keywords.
 
   5. Return the exact unit id from the input for each
-     item in the output array.
+     item. Every unit_id in the input MUST appear in the
+     output exactly once — never skip a unit and never
+     repeat a unit_id. The number of items in your output
+     array MUST equal the number of <unit> blocks in the
+     input. If two adjacent units look similar, they are
+     still separate units and must each get their own
+     output entry with their own unit_id.
 
-  6. Target 5-10 keywords per unit. Fewer keywords are
+  6. If a unit's content is sparse, empty, or lacks
+     meaningful keywords and entities, still include that
+     unit in the output with empty keywords and entities
+     arrays ([]). Never omit a unit from the output —
+     omission is treated as a hard failure.
+
+  7. Target 5-10 keywords per unit. Fewer keywords are
      acceptable when the content is sparse.
 
-  7. Entities must appear in the content text. Do not tag
+  8. Entities must appear in the content text. Do not tag
      entities as "(implied)" or with "?" qualifiers.
 
-  8. Do not emit the document issuer name (e.g., "Royal
+  9. Do not emit the document issuer name (e.g., "Royal
      Bank of Canada", "RBC") unless it distinguishes this
      unit from nearby units. The issuer is already captured
      in document metadata.
 
-  9. Do not tag ubiquitous regulators (OSFI, Basel
-     Committee) on every page. Include them only when
-     the page specifically discusses a guideline or
-     regulatory requirement.
+  10. Do not tag ubiquitous regulators (OSFI, Basel
+      Committee) on every page. Include them only when
+      the page specifically discusses a guideline or
+      regulatory requirement.
 
 tool_choice: required
 
@@ -81,8 +93,11 @@ tools:
                 unit_id:
                   type: string
                   description: >
-                    The content unit identifier from the
-                    input batch id attribute.
+                    The content unit identifier copied
+                    verbatim from the input <unit id="..."
+                    attribute. Each input unit_id must
+                    appear exactly once across the items
+                    array — duplicates are rejected.
                 keywords:
                   type: array
                   items:
@@ -109,7 +124,9 @@ tools:
               additionalProperties: false
             description: >
               Keywords and entities for each content unit
-              in the batch.
+              in the batch. The array length MUST equal the
+              number of input units and every input
+              unit_id must appear exactly once.
           rationale:
             type: string
             description: >
