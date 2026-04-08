@@ -15,6 +15,8 @@ from typing import Any
 
 from ...utils.config_setup import (
     get_section_detection_batch_budget,
+    get_section_detection_max_retries,
+    get_section_detection_retry_delay,
     get_subsection_token_threshold,
 )
 from ...utils.file_types import (
@@ -23,6 +25,7 @@ from ...utils.file_types import (
     get_content_unit_id,
 )
 from ...utils.llm_connector import LLMClient
+from ...utils.llm_retry import call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.token_counting import count_message_tokens
@@ -346,7 +349,11 @@ def _detect_llm_sections(
                 },
                 {"role": "user", "content": user_message},
             ]
-            if batch and count_message_tokens(messages) > budget:
+            if (
+                batch
+                and count_message_tokens(messages, prompt.get("tools"))
+                > budget
+            ):
                 break
             batch = candidate_batch
 
@@ -411,14 +418,16 @@ def _call_section_llm(
         },
         {"role": "user", "content": user_message},
     ]
-    response = llm.call(
-        messages=messages,
+    return call_with_retry(
+        llm,
+        messages,
+        prompt,
+        parser=_parse_section_response,
         stage="section_detection",
-        tools=prompt.get("tools"),
-        tool_choice=prompt.get("tool_choice"),
-        context=(f"section_detection:" f"{Path(result.file_path).name}"),
+        context=f"section_detection:{Path(result.file_path).name}",
+        max_retries=get_section_detection_max_retries(),
+        retry_delay=get_section_detection_retry_delay(),
     )
-    return _parse_section_response(response)
 
 
 def _build_section_results(
@@ -649,18 +658,20 @@ def _detect_llm_subsections(
         },
         {"role": "user", "content": user_message},
     ]
-    response = llm.call(
-        messages=messages,
+    raw_subs = call_with_retry(
+        llm,
+        messages,
+        prompt,
+        parser=_parse_section_response,
         stage="section_detection",
-        tools=prompt.get("tools"),
-        tool_choice=prompt.get("tool_choice"),
         context=(
             f"subsection_detection:"
             f"{Path(result.file_path).name}:"
             f"{section.title}"
         ),
+        max_retries=get_section_detection_max_retries(),
+        retry_delay=get_section_detection_retry_delay(),
     )
-    raw_subs = _parse_section_response(response)
     if not raw_subs:
         return []
 

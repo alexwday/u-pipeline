@@ -293,7 +293,9 @@ def test_build_content_within_budget_counts_formatted_prompt(
     monkeypatch.setattr(
         mod,
         "count_message_tokens",
-        lambda messages: 200 if "Page two" in messages[1]["content"] else 100,
+        lambda messages, tools=None: (
+            200 if "Page two" in messages[1]["content"] else 100
+        ),
     )
 
     result = mod.build_content_within_budget(

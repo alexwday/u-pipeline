@@ -177,7 +177,7 @@ def _patch_dependencies(
     monkeypatch.setattr(
         mod,
         "count_message_tokens",
-        lambda messages: len(messages[1]["content"]),
+        lambda messages, tools=None: len(messages[1]["content"]),
     )
 
     call_log = []
@@ -1151,7 +1151,7 @@ def test_batch_sections_counts_formatted_request_budget(
     monkeypatch.setattr(
         mod,
         "count_message_tokens",
-        lambda messages: (
+        lambda messages, tools=None: (
             200 if "Second section" in messages[1]["content"] else 100
         ),
     )

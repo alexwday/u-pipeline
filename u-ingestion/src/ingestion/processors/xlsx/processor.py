@@ -174,14 +174,20 @@ def _open_workbooks(file_path: str) -> tuple[Any, Any]:
         workbook: Any = load_workbook(filename=file_path, data_only=False)
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Failed to open XLSX '{name}': {exc}") from exc
+
+    success = False
     try:
-        cached_workbook: Any = load_workbook(
-            filename=file_path, data_only=True
-        )
-    except (OSError, ValueError) as exc:
-        workbook.close()
-        raise RuntimeError(f"Failed to open XLSX '{name}': {exc}") from exc
-    return workbook, cached_workbook
+        try:
+            cached_workbook: Any = load_workbook(
+                filename=file_path, data_only=True
+            )
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Failed to open XLSX '{name}': {exc}") from exc
+        success = True
+        return workbook, cached_workbook
+    finally:
+        if not success:
+            workbook.close()
 
 
 def _build_cached_values(

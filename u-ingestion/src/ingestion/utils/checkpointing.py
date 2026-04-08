@@ -71,6 +71,7 @@ _STAGE_DEPENDENCIES = {
     "doc_metadata": (
         "src/ingestion/stages/enrichment/doc_metadata.py",
         "src/ingestion/utils/file_types.py",
+        "src/ingestion/utils/llm_retry.py",
         "src/ingestion/utils/prompt_loader.py",
         "src/ingestion/utils/source_context.py",
         "src/ingestion/utils/token_counting.py",
@@ -78,12 +79,14 @@ _STAGE_DEPENDENCIES = {
     "section_detection": (
         "src/ingestion/stages/enrichment/section_detection.py",
         "src/ingestion/utils/file_types.py",
+        "src/ingestion/utils/llm_retry.py",
         "src/ingestion/utils/prompt_loader.py",
         "src/ingestion/utils/token_counting.py",
     ),
     "content_extraction": (
         "src/ingestion/stages/enrichment/content_extraction.py",
         "src/ingestion/utils/file_types.py",
+        "src/ingestion/utils/llm_retry.py",
         "src/ingestion/utils/prompt_loader.py",
         "src/ingestion/utils/source_context.py",
         "src/ingestion/utils/token_counting.py",
@@ -91,6 +94,7 @@ _STAGE_DEPENDENCIES = {
     "section_summary": (
         "src/ingestion/stages/enrichment/section_summary.py",
         "src/ingestion/utils/file_types.py",
+        "src/ingestion/utils/llm_retry.py",
         "src/ingestion/utils/prompt_loader.py",
         "src/ingestion/utils/source_context.py",
         "src/ingestion/utils/token_counting.py",
@@ -98,6 +102,7 @@ _STAGE_DEPENDENCIES = {
     "doc_summary": (
         "src/ingestion/stages/enrichment/doc_summary.py",
         "src/ingestion/utils/file_types.py",
+        "src/ingestion/utils/llm_retry.py",
         "src/ingestion/utils/prompt_loader.py",
     ),
     "embedding": (

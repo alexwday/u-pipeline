@@ -165,6 +165,27 @@ def test_open_workbooks_closes_formula_book_when_cached_open_fails(
     formula_workbook.close.assert_called_once_with()
 
 
+def test_open_workbooks_closes_formula_book_on_unexpected_exception(
+    monkeypatch,
+):
+    """Close the primary workbook when the cached load raises an unexpected
+    exception outside the known (OSError, ValueError) catch tuple."""
+    formula_workbook = SimpleNamespace(close=Mock())
+
+    def fake_load_workbook(filename, data_only):
+        assert filename == "/tmp/data.xlsx"
+        if not data_only:
+            return formula_workbook
+        raise KeyError("corrupt zip entry")
+
+    monkeypatch.setattr(xlsx_module, "load_workbook", fake_load_workbook)
+
+    with pytest.raises(KeyError, match="corrupt zip entry"):
+        getattr(xlsx_module, "_open_workbooks")("/tmp/data.xlsx")
+
+    formula_workbook.close.assert_called_once_with()
+
+
 def test_build_cached_values_collects_non_empty_cells():
     """Capture cached display values by coordinates."""
     sheet = _FakeSheet(

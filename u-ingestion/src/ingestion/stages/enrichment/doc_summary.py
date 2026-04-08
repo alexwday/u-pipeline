@@ -10,8 +10,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ...utils.config_setup import (
+    get_doc_summary_max_retries,
+    get_doc_summary_retry_delay,
+)
 from ...utils.file_types import ExtractionResult
 from ...utils.llm_connector import LLMClient
+from ...utils.llm_retry import call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 
@@ -241,15 +246,16 @@ def summarize_document(
         {"role": "user", "content": user_message},
     ]
 
-    response = llm.call(
-        messages=messages,
+    summary_data = call_with_retry(
+        llm,
+        messages,
+        prompt,
+        parser=_parse_doc_summary_response,
         stage="doc_summary",
-        tools=prompt.get("tools"),
-        tool_choice=prompt.get("tool_choice"),
-        context=(f"doc_summary:{Path(result.file_path).name}"),
+        context=f"doc_summary:{Path(result.file_path).name}",
+        max_retries=get_doc_summary_max_retries(),
+        retry_delay=get_doc_summary_retry_delay(),
     )
-
-    summary_data = _parse_doc_summary_response(response)
     _update_metadata(result, summary_data)
 
     kw_count = len(summary_data["keywords"])

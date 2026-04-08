@@ -744,6 +744,78 @@ def test_process_file_marks_unexpected_resume_load_failures(
     assert "close" in calls
 
 
+def test_process_file_deletes_artifact_on_db_commit_failure(
+    monkeypatch, file_record_factory, tmp_path
+):
+    """Roll back orphan artifact files when the DB checkpoint commit fails."""
+    record = file_record_factory(file_hash="hash-123")
+    version = _make_version(record, document_version_id=6)
+    conn = SimpleNamespace(close=lambda: None)
+    calls: list = []
+
+    artifact_file = tmp_path / "artifact.json"
+    artifact_file.write_text('{"stage": "extraction"}')
+
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        main_module,
+        "register_document_version",
+        lambda _conn, _record: version,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upsert_catalog_record",
+        lambda _conn, _record: None,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "mark_stage_checkpoint_started",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "extract_file",
+        lambda _record, _llm: SimpleNamespace(file_path=_record.file_path),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "save_extraction_result",
+        lambda _result, _hash, _stage: (str(artifact_file), "checksum-abc"),
+    )
+
+    def failing_commit(*_args, **_kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        main_module, "mark_stage_checkpoint_succeeded", failing_commit
+    )
+    monkeypatch.setattr(
+        main_module,
+        "mark_stage_checkpoint_failed",
+        lambda *args: calls.append(args[2:]),
+    )
+
+    with pytest.raises(RuntimeError, match="Stage extraction failed"):
+        main_module.process_file(
+            record,
+            object(),
+            FileExecutionPlan(
+                record_key=record.file_path,
+                start_stage="extraction",
+                target_stage="extraction",
+            ),
+            {
+                "extraction": "sig-extraction",
+                "tokenization": "sig-tokenization",
+                "classification": "sig-classification",
+                "chunking": "sig-chunking",
+            },
+        )
+
+    assert not artifact_file.exists()
+    assert calls and calls[0][0] == "extraction"
+
+
 def test_process_file_wraps_stage_failures(monkeypatch, file_record_factory):
     """Persist stage failure details and re-raise as RuntimeError."""
     calls = []

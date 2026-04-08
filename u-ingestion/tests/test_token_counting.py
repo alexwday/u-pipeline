@@ -72,3 +72,57 @@ def test_count_message_tokens_renders_roles(monkeypatch):
     assert "<user>" in captured["text"]
     assert "User text" in captured["text"]
     assert "skip" not in captured["text"]
+
+
+def test_count_message_tokens_includes_tool_schema(monkeypatch):
+    """Tool schemas are serialized and counted with the messages."""
+    captured = {}
+
+    def fake_count_text_tokens(text):
+        captured["text"] = text
+        return 42
+
+    monkeypatch.setattr(mod, "count_text_tokens", fake_count_text_tokens)
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "extract_metadata",
+                "description": "ExtractMetadata",
+            },
+        }
+    ]
+    result = mod.count_message_tokens(
+        [{"role": "user", "content": "hi"}],
+        tools=tools,
+    )
+
+    assert result == 42
+    assert "extract_metadata" in captured["text"]
+    assert "ExtractMetadata" in captured["text"]
+
+
+def test_count_message_tokens_ignores_empty_tools(monkeypatch):
+    """Empty tools list (or None) adds nothing to the rendered text."""
+    captured = {}
+
+    def fake_count_text_tokens(text):
+        captured["text"] = text
+        return 3
+
+    monkeypatch.setattr(mod, "count_text_tokens", fake_count_text_tokens)
+
+    result = mod.count_message_tokens(
+        [{"role": "user", "content": "hello"}],
+        tools=None,
+    )
+
+    assert result == 3
+    assert "function" not in captured["text"]
+
+    mod.count_message_tokens(
+        [{"role": "user", "content": "hello"}],
+        tools=[],
+    )
+    assert "function" not in captured["text"]

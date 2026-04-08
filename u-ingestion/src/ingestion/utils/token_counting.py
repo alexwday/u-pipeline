@@ -1,5 +1,6 @@
 """Helpers for estimating prompt token usage."""
 
+import json
 from functools import lru_cache
 
 import tiktoken
@@ -37,14 +38,22 @@ def count_text_tokens(text: str) -> int:
     return len(encoder.encode(text))
 
 
-def count_message_tokens(messages: list[dict]) -> int:
-    """Count tokens for a list of chat messages.
+def count_message_tokens(
+    messages: list[dict],
+    tools: list[dict] | None = None,
+) -> int:
+    """Count tokens for chat messages and optional tool schemas.
+
+    Tool schemas count against the model's context window when passed
+    to OpenAI-compatible APIs, so they should be included in budget
+    calculations even though they live outside the message list.
 
     Params:
         messages: Chat message dicts with role/content
+        tools: Optional tool schema dicts passed to the LLM call
 
     Returns:
-        int -- estimated token count across rendered messages
+        int -- estimated token count across messages and tool schemas
     """
     rendered_parts: list[str] = []
     for message in messages:
@@ -53,6 +62,8 @@ def count_message_tokens(messages: list[dict]) -> int:
         if not isinstance(content, str):
             continue
         rendered_parts.append(f"<{role}>\n{content}\n</{role}>")
+    if tools:
+        rendered_parts.append(json.dumps(tools, sort_keys=True))
     return count_text_tokens("\n\n".join(rendered_parts))
 
 

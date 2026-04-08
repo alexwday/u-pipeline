@@ -3,7 +3,9 @@
 import base64
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -111,6 +113,58 @@ def _format_conversion_error(
     return "; ".join(details)
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill the subprocess's entire process group via SIGKILL.
+
+    Params: proc (subprocess.Popen). Returns: None.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+
+
+def _run_soffice_conversion(
+    cmd: list[str],
+    source_name: str,
+) -> subprocess.CompletedProcess:
+    """Run LibreOffice in its own process group and kill the group on timeout.
+
+    Using start_new_session=True places soffice in a new process group so
+    SIGKILL via os.killpg reaches the whole tree, including soffice's
+    child workers that would otherwise orphan on the direct-child kill.
+
+    Params:
+        cmd: soffice command and arguments
+        source_name: Filename for diagnostics
+
+    Returns:
+        subprocess.CompletedProcess with stdout/stderr/returncode
+    """
+    with subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(timeout=_CONVERSION_TIMEOUT_S)
+        except subprocess.TimeoutExpired as exc:
+            _kill_process_group(proc)
+            stdout, stderr = proc.communicate()
+            raise RuntimeError(
+                f"LibreOffice conversion timed out after "
+                f"{_CONVERSION_TIMEOUT_S}s for '{source_name}'"
+            ) from exc
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+
 def convert_to_pdf(docx_path: Path, output_dir: Path) -> Path:
     """Convert a DOCX file to PDF using LibreOffice headless.
 
@@ -143,19 +197,7 @@ def convert_to_pdf(docx_path: Path, output_dir: Path) -> Path:
     logger.info("Converting '%s' to PDF via LibreOffice", docx_path.name)
 
     with _CONVERSION_LOCK:
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=_CONVERSION_TIMEOUT_S,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"LibreOffice conversion timed out after "
-                f"{_CONVERSION_TIMEOUT_S}s for '{docx_path.name}'"
-            ) from exc
+        result = _run_soffice_conversion(cmd, docx_path.name)
 
     if result.returncode != 0:
         raise RuntimeError(

@@ -8,11 +8,8 @@ batched by token budget to minimize LLM calls.
 import json
 import logging
 import re
-import time
 from pathlib import Path
 from typing import Any
-
-import openai
 
 from ...utils.config_setup import (
     get_content_extraction_batch_budget,
@@ -21,6 +18,7 @@ from ...utils.config_setup import (
 )
 from ...utils.file_types import ExtractionResult, get_content_unit_id
 from ...utils.llm_connector import LLMClient
+from ...utils.llm_retry import call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.source_context import get_result_source_context
@@ -32,14 +30,6 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 _SHEET_NAME_RE = re.compile(r"^#\s+Sheet:\s+(.+)$", re.MULTILINE)
 _HEADING_RE = re.compile(r"^#+\s+(.+)$", re.MULTILINE)
-
-_RETRYABLE_ERRORS = (
-    openai.RateLimitError,
-    openai.APITimeoutError,
-    openai.APIConnectionError,
-    openai.InternalServerError,
-    ValueError,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +130,9 @@ def _batch_units(
                 {"role": "user", "content": user_message},
             ]
             exceeds_budget = (
-                bool(current_batch) and count_message_tokens(messages) > budget
+                bool(current_batch)
+                and count_message_tokens(messages, prompt.get("tools"))
+                > budget
             )
         else:
             cost = unit["raw_token_count"]
@@ -392,70 +384,6 @@ def _build_content_units(result: ExtractionResult) -> list[dict]:
     return content_units
 
 
-def _call_with_retry(
-    llm: LLMClient,
-    messages: list,
-    prompt: dict[str, Any],
-    batch: list[dict],
-    context: str,
-) -> dict[str, dict]:
-    """Call LLM for one batch with retry on transient and structural errors.
-
-    Wraps llm.call + _parse_extraction_response + _validate_batch_results
-    so that missing tool_calls, duplicate unit_ids, and batch-id
-    mismatches — all known nondeterministic LLM failure modes — survive
-    bounded retries instead of killing the whole file. Note: retrying at
-    temperature=0 is unlikely to recover from deterministic failures;
-    operators can bump CONTENT_EXTRACTION_MAX_RETRIES if observation
-    shows retries aren't helping.
-
-    Params:
-        llm: LLMClient instance
-        messages: Message list for the API call
-        prompt: Loaded content_extraction prompt
-        batch: Content-unit batch for validation
-        context: Log label for the request
-
-    Returns:
-        dict[str, dict] -- parsed unit_id -> {keywords, entities}
-    """
-    max_retries = get_content_extraction_max_retries()
-    retry_delay = get_content_extraction_retry_delay()
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = llm.call(
-                messages=messages,
-                stage="content_extraction",
-                tools=prompt.get("tools"),
-                tool_choice=prompt.get("tool_choice"),
-                context=f"{context}:attempt_{attempt}",
-            )
-            batch_results = _parse_extraction_response(response)
-            _validate_batch_results(batch, batch_results)
-            return batch_results
-        except _RETRYABLE_ERRORS as exc:
-            if attempt == max_retries:
-                logger.error(
-                    "%s failed after %d retries: %s",
-                    context,
-                    max_retries,
-                    exc,
-                )
-                raise
-            wait = retry_delay * attempt
-            logger.warning(
-                "%s retry %d/%d after %.1fs: %s",
-                context,
-                attempt,
-                max_retries,
-                wait,
-                exc,
-            )
-            time.sleep(wait)
-    raise RuntimeError(f"{context} exited retry loop without a response")
-
-
 def extract_content(
     result: ExtractionResult,
     llm: LLMClient,
@@ -509,12 +437,18 @@ def extract_content(
             f"{Path(result.file_path).name}:"
             f"batch_{batch_idx + 1}"
         )
-        batch_results = _call_with_retry(
+        batch_results = call_with_retry(
             llm,
             messages,
             prompt,
-            batch,
-            batch_context,
+            parser=_parse_extraction_response,
+            stage="content_extraction",
+            context=batch_context,
+            max_retries=get_content_extraction_max_retries(),
+            retry_delay=get_content_extraction_retry_delay(),
+            validator=lambda parsed, _batch=batch: _validate_batch_results(
+                _batch, parsed
+            ),
         )
         all_extractions.update(batch_results)
 
@@ -548,4 +482,3 @@ validate_batch_results = _validate_batch_results
 apply_to_pages = _apply_to_pages
 build_doc_context = _build_doc_context
 build_content_units = _build_content_units
-call_with_retry = _call_with_retry

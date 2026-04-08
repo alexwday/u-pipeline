@@ -10,9 +10,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ...utils.config_setup import get_doc_metadata_context_budget
+from ...utils.config_setup import (
+    get_doc_metadata_context_budget,
+    get_doc_metadata_max_retries,
+    get_doc_metadata_retry_delay,
+)
 from ...utils.file_types import ExtractionResult
 from ...utils.llm_connector import LLMClient
+from ...utils.llm_retry import call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.source_context import get_result_source_context
@@ -130,7 +135,11 @@ def _build_content_within_budget(
                 {"role": "system", "content": prompt["system_prompt"]},
                 {"role": "user", "content": user_message},
             ]
-            if parts and count_message_tokens(messages) > budget:
+            if (
+                parts
+                and count_message_tokens(messages, prompt.get("tools"))
+                > budget
+            ):
                 break
         elif used + raw_cost > budget and parts:
             break
@@ -355,15 +364,16 @@ def enrich_doc_metadata(
         {"role": "user", "content": user_message},
     ]
 
-    response = llm.call(
-        messages=messages,
+    metadata = call_with_retry(
+        llm,
+        messages,
+        prompt,
+        parser=_parse_metadata_response,
         stage="doc_metadata",
-        tools=prompt.get("tools"),
-        tool_choice=prompt.get("tool_choice"),
         context=f"doc_metadata:{Path(result.file_path).name}",
+        max_retries=get_doc_metadata_max_retries(),
+        retry_delay=get_doc_metadata_retry_delay(),
     )
-
-    metadata = _parse_metadata_response(response)
     source_context = get_result_source_context(result)
 
     if result.filetype == "xlsx":

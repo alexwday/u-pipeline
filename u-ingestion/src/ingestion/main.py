@@ -398,14 +398,18 @@ def process_file(
                     record.file_hash,
                     stage_name,
                 )
-                mark_stage_checkpoint_succeeded(
-                    conn,
-                    version.document_version_id,
-                    stage_name,
-                    stage_signatures[stage_name],
-                    artifact_path,
-                    artifact_checksum,
-                )
+                try:
+                    mark_stage_checkpoint_succeeded(
+                        conn,
+                        version.document_version_id,
+                        stage_name,
+                        stage_signatures[stage_name],
+                        artifact_path,
+                        artifact_checksum,
+                    )
+                except Exception:
+                    Path(artifact_path).unlink(missing_ok=True)
+                    raise
             except Exception as exc:
                 mark_stage_checkpoint_failed(
                     conn,

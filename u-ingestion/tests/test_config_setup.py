@@ -248,6 +248,18 @@ def test_get_processor_retry_config(monkeypatch):
     assert config_setup.get_content_extraction_max_retries() == 3
     assert config_setup.get_content_extraction_retry_delay() == 2.0
 
+    assert config_setup.get_doc_metadata_max_retries() == 3
+    assert config_setup.get_doc_metadata_retry_delay() == 2.0
+
+    assert config_setup.get_section_detection_max_retries() == 3
+    assert config_setup.get_section_detection_retry_delay() == 2.0
+
+    assert config_setup.get_section_summary_max_retries() == 3
+    assert config_setup.get_section_summary_retry_delay() == 2.0
+
+    assert config_setup.get_doc_summary_max_retries() == 3
+    assert config_setup.get_doc_summary_retry_delay() == 2.0
+
     monkeypatch.setenv("PDF_VISION_MAX_RETRIES", "5")
     assert config_setup.get_pdf_vision_max_retries() == 5
 

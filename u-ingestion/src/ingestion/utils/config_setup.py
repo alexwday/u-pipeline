@@ -700,6 +700,102 @@ def get_content_extraction_retry_delay() -> float:
     )
 
 
+def get_doc_metadata_max_retries() -> int:
+    """Get max retries for doc_metadata LLM calls.
+
+    Returns: int — default 3.
+    """
+    return _get_int_env(
+        "DOC_METADATA_MAX_RETRIES",
+        default="3",
+        minimum=1,
+    )
+
+
+def get_doc_metadata_retry_delay() -> float:
+    """Get base backoff delay for doc_metadata retries.
+
+    Returns: float — default 2.0.
+    """
+    return _get_float_env(
+        "DOC_METADATA_RETRY_DELAY_SECONDS",
+        default="2.0",
+        minimum=0.0,
+    )
+
+
+def get_section_detection_max_retries() -> int:
+    """Get max retries for section_detection LLM calls.
+
+    Returns: int — default 3.
+    """
+    return _get_int_env(
+        "SECTION_DETECTION_MAX_RETRIES",
+        default="3",
+        minimum=1,
+    )
+
+
+def get_section_detection_retry_delay() -> float:
+    """Get base backoff delay for section_detection retries.
+
+    Returns: float — default 2.0.
+    """
+    return _get_float_env(
+        "SECTION_DETECTION_RETRY_DELAY_SECONDS",
+        default="2.0",
+        minimum=0.0,
+    )
+
+
+def get_section_summary_max_retries() -> int:
+    """Get max retries for section_summary LLM calls.
+
+    Returns: int — default 3.
+    """
+    return _get_int_env(
+        "SECTION_SUMMARY_MAX_RETRIES",
+        default="3",
+        minimum=1,
+    )
+
+
+def get_section_summary_retry_delay() -> float:
+    """Get base backoff delay for section_summary retries.
+
+    Returns: float — default 2.0.
+    """
+    return _get_float_env(
+        "SECTION_SUMMARY_RETRY_DELAY_SECONDS",
+        default="2.0",
+        minimum=0.0,
+    )
+
+
+def get_doc_summary_max_retries() -> int:
+    """Get max retries for doc_summary LLM calls.
+
+    Returns: int — default 3.
+    """
+    return _get_int_env(
+        "DOC_SUMMARY_MAX_RETRIES",
+        default="3",
+        minimum=1,
+    )
+
+
+def get_doc_summary_retry_delay() -> float:
+    """Get base backoff delay for doc_summary retries.
+
+    Returns: float — default 2.0.
+    """
+    return _get_float_env(
+        "DOC_SUMMARY_RETRY_DELAY_SECONDS",
+        default="2.0",
+        minimum=0.0,
+    )
+
+
 def get_section_summary_batch_budget() -> int:
     """Token budget per batch for section summarization.
 

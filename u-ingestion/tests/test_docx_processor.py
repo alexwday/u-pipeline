@@ -144,29 +144,35 @@ def test_convert_to_pdf_returns_generated_file(monkeypatch, tmp_path):
     docx_path.write_text("docx")
     output_dir.mkdir()
 
-    def fake_run(*_args, **_kwargs):
+    def fake_run_soffice(_cmd, _source_name):
         pdf_path.write_bytes(b"%PDF")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(docx_module, "_find_soffice", lambda: "soffice")
-    monkeypatch.setattr(docx_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        docx_module, "_run_soffice_conversion", fake_run_soffice
+    )
 
     assert docx_module.convert_to_pdf(docx_path, output_dir) == pdf_path
 
 
-def test_convert_to_pdf_wraps_timeout(monkeypatch, tmp_path):
-    """Wrap LibreOffice timeouts in RuntimeError."""
+def test_convert_to_pdf_propagates_timeout_runtime_error(
+    monkeypatch, tmp_path
+):
+    """Propagate the RuntimeError raised on conversion timeout."""
     docx_path = tmp_path / "doc.docx"
     output_dir = tmp_path / "out"
     docx_path.write_text("docx")
     output_dir.mkdir()
     monkeypatch.setattr(docx_module, "_find_soffice", lambda: "soffice")
+
+    def fake_run_soffice(_cmd, source_name):
+        raise RuntimeError(
+            f"LibreOffice conversion timed out after 120s for '{source_name}'"
+        )
+
     monkeypatch.setattr(
-        docx_module.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired(cmd="soffice", timeout=120)
-        ),
+        docx_module, "_run_soffice_conversion", fake_run_soffice
     )
 
     with pytest.raises(RuntimeError, match="conversion timed out"):
@@ -181,9 +187,9 @@ def test_convert_to_pdf_rejects_nonzero_exit(monkeypatch, tmp_path):
     output_dir.mkdir()
     monkeypatch.setattr(docx_module, "_find_soffice", lambda: "soffice")
     monkeypatch.setattr(
-        docx_module.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        docx_module,
+        "_run_soffice_conversion",
+        lambda *_args: SimpleNamespace(
             returncode=1,
             stdout="bad",
             stderr="worse",
@@ -202,9 +208,9 @@ def test_convert_to_pdf_requires_output_file(monkeypatch, tmp_path):
     output_dir.mkdir()
     monkeypatch.setattr(docx_module, "_find_soffice", lambda: "soffice")
     monkeypatch.setattr(
-        docx_module.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        docx_module,
+        "_run_soffice_conversion",
+        lambda *_args: SimpleNamespace(
             returncode=0,
             stdout="",
             stderr="",
@@ -213,6 +219,83 @@ def test_convert_to_pdf_requires_output_file(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="produced no output"):
         docx_module.convert_to_pdf(docx_path, output_dir)
+
+
+class _FakePopen:
+    """Minimal Popen stand-in for _run_soffice_conversion tests."""
+
+    def __init__(self, timeout_first=False, returncode=0, pid=12345):
+        self.pid = pid
+        self.returncode = returncode
+        self._timeout_first = timeout_first
+        self._calls = 0
+
+    def communicate(self, timeout=None):
+        """Mimic Popen.communicate: optionally raise TimeoutExpired once."""
+        self._calls += 1
+        if self._timeout_first and self._calls == 1:
+            raise subprocess.TimeoutExpired(cmd="soffice", timeout=timeout)
+        return ("stdout-content", "stderr-content")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_run_soffice_conversion_returns_completed_process(monkeypatch):
+    """Happy path: Popen communicates successfully and returns a result."""
+    fake = _FakePopen()
+    monkeypatch.setattr(
+        docx_module.subprocess, "Popen", lambda *_a, **_kw: fake
+    )
+
+    result = getattr(docx_module, "_run_soffice_conversion")(
+        ["soffice", "--headless"], "doc.docx"
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "stdout-content"
+    assert result.stderr == "stderr-content"
+
+
+def test_run_soffice_conversion_kills_process_group_on_timeout(monkeypatch):
+    """On timeout, the helper kills the whole process group and raises."""
+    fake = _FakePopen(timeout_first=True, pid=98765)
+    killpg_calls: list[tuple] = []
+    monkeypatch.setattr(
+        docx_module.subprocess, "Popen", lambda *_a, **_kw: fake
+    )
+    monkeypatch.setattr(docx_module.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        docx_module.os,
+        "killpg",
+        lambda pgid, sig: killpg_calls.append((pgid, sig)),
+    )
+
+    with pytest.raises(RuntimeError, match="conversion timed out"):
+        getattr(docx_module, "_run_soffice_conversion")(
+            ["soffice", "--headless"], "doc.docx"
+        )
+
+    assert killpg_calls == [(98765, docx_module.signal.SIGKILL)]
+
+
+def test_kill_process_group_falls_back_when_process_missing(monkeypatch):
+    """If os.killpg raises ProcessLookupError, call proc.kill() as fallback."""
+    kill_calls: list[int] = []
+    fake = SimpleNamespace(pid=42, kill=lambda: kill_calls.append(42))
+    monkeypatch.setattr(docx_module.os, "getpgid", lambda pid: pid)
+
+    def raise_lookup(_pgid, _sig):
+        raise ProcessLookupError("gone")
+
+    monkeypatch.setattr(docx_module.os, "killpg", raise_lookup)
+
+    getattr(docx_module, "_kill_process_group")(fake)
+
+    assert kill_calls == [42]
 
 
 def test_open_rendered_pdf_yields_handle_and_closes(monkeypatch):
