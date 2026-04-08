@@ -15,6 +15,7 @@ wrong column.
 CLI usage (from project root, inside the venv):
     python -m scripts.seed_data dump   # write seed files from current DB
     python -m scripts.seed_data load   # wipe and load seed files into DB
+    python -m scripts.seed_data wipe   # truncate all ingestion tables
     python -m scripts.seed_data status # row counts in DB and on disk
 """
 
@@ -358,6 +359,18 @@ def _cli_load() -> None:
         conn.close()
 
 
+def _cli_wipe() -> None:
+    """CLI entry point for wiping ingestion tables. Returns: None."""
+    schema = schema_from_env()
+    conn = _open_connection()
+    try:
+        print(f"Wiping {schema}")
+        wipe(conn, schema)
+        print("Wipe complete")
+    finally:
+        conn.close()
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Dispatch a seed_data subcommand.
 
@@ -375,6 +388,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "dump": _cli_dump,
         "load": _cli_load,
+        "wipe": _cli_wipe,
         "status": _cli_status,
     }
     handler = handlers.get(cmd)
