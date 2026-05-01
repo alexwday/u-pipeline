@@ -179,7 +179,9 @@ Run from `u-ingestion`:
 
 ```bash
 cd /path/to/u-pipeline/u-ingestion
+REPO="$(cd .. && pwd)"
 
+DATA_SOURCE_PATH="$REPO/input-data" \
 MAX_WORKERS=1 \
 EXTRACTION_PAGE_WORKERS=2 \
 EXTRACTION_REGION_WORKERS=3 \
@@ -209,19 +211,23 @@ banks, run from `u-ingestion`:
 
 ```bash
 cd /path/to/u-pipeline/u-ingestion
+REPO="$(cd .. && pwd)"
 
+DATA_SOURCE_PATH="$REPO/input-data" \
 MAX_WORKERS=1 \
 EXTRACTION_PAGE_WORKERS=2 \
 EXTRACTION_REGION_WORKERS=3 \
 VISION_DPI_SCALE=3.0 \
 ../.venv/bin/python -m src.ingestion.main \
-  --file-path /path/to/u-pipeline/input-data/investor-slides/2026_Q1/BNS/bns_q1_2026_investor_slides.pdf
+  --file-path "$REPO/input-data/investor-slides/2026_Q1/BNS/bns_q1_2026_investor_slides.pdf"
 ```
 
-Replace `/path/to/u-pipeline` with the real repo path on the work
-computer.
+`DATA_SOURCE_PATH` is set inline here because the pipeline's
+`load_dotenv()` call does not override environment variables that were
+already exported in your shell. This prevents an older
+`DATA_SOURCE_PATH` value from pointing discovery at the wrong folder.
 
-If you are already in the repo root, the BNS path is:
+If you are already in the repo root, the BNS path resolves to:
 
 ```bash
 $(pwd)/input-data/investor-slides/2026_Q1/BNS/bns_q1_2026_investor_slides.pdf
