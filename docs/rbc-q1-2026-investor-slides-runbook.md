@@ -202,7 +202,32 @@ input-data/investor-slides/2026_Q1/TD/td_q1_2026_investor_slides.pdf
 If the run is interrupted, rerun the same command. The pipeline is
 checkpointed and will resume from the earliest incomplete stage.
 
-## 6. Smoke Test Retrieval
+## 6. Optional BNS-Only Test Run
+
+To process only the BNS Q1 2026 investor slides before running all six
+banks, run from `u-ingestion`:
+
+```bash
+cd /path/to/u-pipeline/u-ingestion
+
+MAX_WORKERS=1 \
+EXTRACTION_PAGE_WORKERS=2 \
+EXTRACTION_REGION_WORKERS=3 \
+VISION_DPI_SCALE=3.0 \
+../.venv/bin/python -m src.ingestion.main \
+  --file-path /path/to/u-pipeline/input-data/investor-slides/2026_Q1/BNS/bns_q1_2026_investor_slides.pdf
+```
+
+Replace `/path/to/u-pipeline` with the real repo path on the work
+computer.
+
+If you are already in the repo root, the BNS path is:
+
+```bash
+$(pwd)/input-data/investor-slides/2026_Q1/BNS/bns_q1_2026_investor_slides.pdf
+```
+
+## 7. Smoke Test Retrieval
 
 After ingestion completes, run a targeted retrieval query from
 `u-retriever`:
