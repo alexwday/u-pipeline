@@ -60,7 +60,7 @@ def persist_enrichment(
         insert_document_content(conn, version_id, result.content_units)
 
         stage_log.info(
-            "Persisted enrichment for %s" " (sections=%d, content_units=%d)",
+            "Persisted enrichment for %s (sections=%d, content_units=%d)",
             result.file_path,
             len(result.sections),
             len(result.content_units),

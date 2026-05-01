@@ -17,6 +17,22 @@ def _stub_prompt():
     }
 
 
+def _retry_config(
+    context,
+    max_retries=3,
+    retry_delay=0.0,
+    validator=None,
+):
+    """Build retry config for tests."""
+    return llm_retry.RetryConfig(
+        stage="test_stage",
+        context=context,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        validator=validator,
+    )
+
+
 def _make_llm(responses, record=None):
     """Build a fake LLM client that returns a sequence of responses."""
     state = {"idx": 0}
@@ -48,10 +64,7 @@ def test_call_with_retry_returns_parsed_result_on_first_attempt(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=lambda response: response["data"],
-        stage="test_stage",
-        context="test:single",
-        max_retries=3,
-        retry_delay=0.0,
+        config=_retry_config("test:single"),
     )
 
     assert result == "ok"
@@ -74,10 +87,7 @@ def test_call_with_retry_retries_on_value_error(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=parser,
-        stage="test_stage",
-        context="test:retry",
-        max_retries=3,
-        retry_delay=0.0,
+        config=_retry_config("test:retry"),
     )
 
     assert result == "ok"
@@ -97,10 +107,7 @@ def test_call_with_retry_retries_on_transport_error(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=lambda response: response["data"],
-        stage="test_stage",
-        context="test:transport",
-        max_retries=3,
-        retry_delay=0.0,
+        config=_retry_config("test:transport"),
     )
 
     assert result == "ok"
@@ -120,11 +127,7 @@ def test_call_with_retry_retries_on_validator_failure(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=lambda response: response["ids"],
-        stage="test_stage",
-        context="test:validator",
-        max_retries=3,
-        retry_delay=0.0,
-        validator=validator,
+        config=_retry_config("test:validator", validator=validator),
     )
 
     assert result == ["1"]
@@ -144,10 +147,7 @@ def test_call_with_retry_raises_after_all_attempts_fail(monkeypatch):
             [{"role": "user", "content": "hi"}],
             _stub_prompt(),
             parser=parser,
-            stage="test_stage",
-            context="test:exhausted",
-            max_retries=2,
-            retry_delay=0.0,
+            config=_retry_config("test:exhausted", max_retries=2),
         )
 
 
@@ -162,10 +162,7 @@ def test_call_with_retry_does_not_retry_on_non_retryable(monkeypatch):
             [{"role": "user", "content": "hi"}],
             _stub_prompt(),
             parser=lambda response: response["data"],
-            stage="test_stage",
-            context="test:non_retryable",
-            max_retries=3,
-            retry_delay=0.0,
+            config=_retry_config("test:non_retryable"),
         )
 
 
@@ -188,10 +185,7 @@ def test_call_with_retry_appends_attempt_number_to_context(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=parser,
-        stage="test_stage",
-        context="test:context",
-        max_retries=3,
-        retry_delay=0.0,
+        config=_retry_config("test:context"),
     )
 
     contexts = [call["context"] for call in calls]
@@ -209,10 +203,7 @@ def test_call_with_retry_passes_stage_and_tools(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=lambda response: response["data"],
-        stage="test_stage",
-        context="test:args",
-        max_retries=1,
-        retry_delay=0.0,
+        config=_retry_config("test:args", max_retries=1),
     )
 
     assert calls[0]["stage"] == "test_stage"
@@ -233,10 +224,7 @@ def test_call_with_retry_raises_when_retry_loop_never_runs(monkeypatch):
             [{"role": "user", "content": "hi"}],
             _stub_prompt(),
             parser=lambda response: response["data"],
-            stage="test_stage",
-            context="test:zero",
-            max_retries=0,
-            retry_delay=0.0,
+            config=_retry_config("test:zero", max_retries=0),
         )
 
 
@@ -256,10 +244,7 @@ def test_call_with_retry_linear_backoff_scales_with_attempt(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=parser,
-        stage="test_stage",
-        context="test:backoff",
-        max_retries=3,
-        retry_delay=1.5,
+        config=_retry_config("test:backoff", retry_delay=1.5),
     )
 
     assert sleeps == [1.5, 3.0]
@@ -275,11 +260,7 @@ def test_call_with_retry_skips_validator_when_none(monkeypatch):
         [{"role": "user", "content": "hi"}],
         _stub_prompt(),
         parser=lambda response: response["data"],
-        stage="test_stage",
-        context="test:no_validator",
-        max_retries=1,
-        retry_delay=0.0,
-        validator=None,
+        config=_retry_config("test:no_validator", max_retries=1),
     )
 
     assert result == "ok"

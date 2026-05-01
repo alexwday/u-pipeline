@@ -1,0 +1,76 @@
+# ─── Metadata ───────────────────────────────────────────────
+stage: extraction
+version: "1.0"
+description: >
+  Extract a single cropped visual region from a PDF page into
+  structured markdown.
+
+# ─── System Prompt ──────────────────────────────────────────
+system_prompt: >
+  You are a financial visual extraction agent. Convert one cropped
+  chart, graph, table, diagram, or dense visual region into accurate,
+  structured markdown. Always use the provided tool.
+
+# ─── User Prompt ────────────────────────────────────────────
+user_prompt: >
+  Extract the cropped visual region. The full-page text context may
+  omit or misread values. The cropped image is the source of truth.
+
+  Rules:
+  1. For tables, reproduce every visible row, column, header, unit, and
+     footnote marker as a markdown table.
+  2. For line charts, first transcribe visible numeric value labels by
+     label color and x-axis position, then map those labels to series
+     using the legend and label color.
+  3. For multi-series charts, do not assign values by nearest line,
+     marker, or label position alone. When lines cross or points
+     overlap, the colored numeric label is authoritative for its series.
+  4. For bar, stacked bar, waterfall, and area charts, extract categories,
+     periods, segment labels, units, and values into structured tables.
+  5. For diagrams, extract visible labels and relationships in a concise
+     structured list.
+  6. Preserve exact visible numbers, signs, units, percent symbols, bps,
+     currency symbols, and footnote markers.
+  7. If a value is genuinely unreadable, write [ambiguous] and explain
+     the ambiguity in confidence_notes. Do not guess.
+  8. Include the region_id, region type, visible title, and source bbox
+     at the top of the content.
+  9. Prefer tables for extracted numeric data so retrieval can read
+     values deterministically.
+  10. Do not copy values from the full-page context unless they are also
+      visible in the crop.
+
+  Examples:
+  - If two line-chart series cross and the red label says 518 while the
+    grey label says 523 at the same period, assign 518 to the red series
+    and 523 to the grey series even if the line positions overlap.
+  - If a crop is a table, reproduce the visible headers, row labels,
+    units, and all visible cells as a markdown table.
+
+# ─── Tool Choice ────────────────────────────────────────────
+tool_choice: required
+
+# ─── Tool Definitions ──────────────────────────────────────
+tools:
+  - type: function
+    function:
+      name: extract_visual_region
+      description: >
+        Call this tool when you have extracted the cropped visual region
+        into structured markdown and noted any ambiguity.
+      parameters:
+        type: object
+        properties:
+          content:
+            type: string
+            description: >
+              Structured markdown extraction for the cropped region.
+          confidence_notes:
+            type: string
+            description: >
+              Short note describing confidence, crossings, ambiguities,
+              or unreadable values. Use an empty string if none.
+        required:
+          - content
+          - confidence_notes
+        additionalProperties: false

@@ -173,13 +173,21 @@ def get_database_config() -> dict:
         >>> get_database_config()
         {"host": "localhost", "port": "5432", ...}
     """
-    return {
+    config = {
         "host": _require_env("DB_HOST"),
         "port": _require_env("DB_PORT"),
         "dbname": _require_env("DB_NAME"),
         "user": _require_env("DB_USER"),
         "password": os.getenv("DB_PASSWORD", ""),
     }
+    ssl_options = {
+        "sslmode": os.getenv("DB_SSLMODE", ""),
+        "sslrootcert": os.getenv("DB_SSLROOTCERT", ""),
+        "sslcert": os.getenv("DB_SSLCERT", ""),
+        "sslkey": os.getenv("DB_SSLKEY", ""),
+    }
+    config.update({key: value for key, value in ssl_options.items() if value})
+    return config
 
 
 def get_database_schema() -> str:

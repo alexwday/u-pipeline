@@ -139,22 +139,26 @@ def _normalize_cell_value(
         Cleaned string representation
     """
     if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, datetime):
+        normalized = ""
+    elif isinstance(value, bool):
+        normalized = "TRUE" if value else "FALSE"
+    elif isinstance(value, datetime):
         if value.hour == 0 and value.minute == 0 and value.second == 0:
-            return value.strftime("%Y-%m-%d")
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(value, date):
-        return value.strftime("%Y-%m-%d")
-    if isinstance(value, float):
+            normalized = value.strftime("%Y-%m-%d")
+        else:
+            normalized = value.strftime("%Y-%m-%d %H:%M:%S")
+    elif isinstance(value, date):
+        normalized = value.strftime("%Y-%m-%d")
+    elif isinstance(value, float):
         if number_format and "%" in number_format:
-            return format(value * 100, ".10g") + "%"
-        return format(value, ".15g")
-    if isinstance(value, int):
-        return str(value)
-    return str(value).replace("\r\n", "\n").replace("\r", "\n")
+            normalized = format(value * 100, ".10g") + "%"
+        else:
+            normalized = format(value, ".15g")
+    elif isinstance(value, int):
+        normalized = str(value)
+    else:
+        normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return normalized
 
 
 def _escape_table_text(value: str) -> str:

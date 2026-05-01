@@ -19,7 +19,7 @@ from ...utils.config_setup import (
 )
 from ...utils.file_types import ExtractionResult, get_content_unit_id
 from ...utils.llm_connector import LLMClient
-from ...utils.llm_retry import call_with_retry
+from ...utils.llm_retry import RetryConfig, call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.source_context import get_result_source_context
@@ -669,16 +669,20 @@ def _process_batches(
             messages,
             prompt,
             parser=_parse_summary_response,
-            stage="section_summary",
-            context=(
-                f"section_summary:"
-                f"{Path(result.file_path).name}:"
-                f"batch_{batch_count + 1}"
-            ),
-            max_retries=get_section_summary_max_retries(),
-            retry_delay=get_section_summary_retry_delay(),
-            validator=lambda parsed, _batch=batch: _validate_batch_results(
-                _batch, parsed
+            config=RetryConfig(
+                stage="section_summary",
+                context=(
+                    f"section_summary:"
+                    f"{Path(result.file_path).name}:"
+                    f"batch_{batch_count + 1}"
+                ),
+                max_retries=get_section_summary_max_retries(),
+                retry_delay=get_section_summary_retry_delay(),
+                validator=(
+                    lambda parsed, _batch=batch: _validate_batch_results(
+                        _batch, parsed
+                    )
+                ),
             ),
         )
         all_summaries.update(batch_results)

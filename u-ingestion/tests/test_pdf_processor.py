@@ -1,5 +1,6 @@
 """Tests for the PDF processor."""
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +77,28 @@ def _mock_prompt():
     return {
         "system_prompt": "system",
         "user_prompt": "user",
+        "stage": "extraction",
+        "tools": [{"type": "function"}],
+        "tool_choice": "required",
+    }
+
+
+def _mock_layout_prompt():
+    """Build a minimal layout prompt."""
+    return {
+        "system_prompt": "layout system",
+        "user_prompt": "layout user",
+        "stage": "extraction",
+        "tools": [{"type": "function"}],
+        "tool_choice": "required",
+    }
+
+
+def _mock_region_prompt():
+    """Build a minimal visual-region prompt."""
+    return {
+        "system_prompt": "region system",
+        "user_prompt": "region user",
         "stage": "extraction",
         "tools": [{"type": "function"}],
         "tool_choice": "required",
@@ -201,6 +224,119 @@ def test_parse_extraction_response_reads_tool_arguments():
     }
 
     assert pdf_module.parse_extraction_response(response) == "# Page"
+
+
+def test_parse_page_layout_response_reads_regions():
+    """Parse text OCR and visual region JSON from a layout response."""
+    regions = [
+        {
+            "region_id": "chart_1",
+            "type": "line_chart",
+            "label": "Credit Cards",
+            "bbox": [0.1, 0.2, 0.8, 0.9],
+            "context": "legend context",
+            "requires_region_extraction": True,
+            "confidence": 0.88,
+        }
+    ]
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "arguments": json.dumps(
+                                    {
+                                        "page_text_markdown": "# Page",
+                                        "visual_regions_json": json.dumps(
+                                            regions
+                                        ),
+                                        "rationale": "segmented",
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    layout = pdf_module.parse_page_layout_response(response)
+
+    assert layout.page_text_markdown == "# Page"
+    assert layout.visual_regions[0].region_id == "chart_1"
+    assert layout.visual_regions[0].bbox == [0.1, 0.2, 0.8, 0.9]
+
+
+def test_extract_visual_regions_preserves_layout_order(monkeypatch):
+    """Extract eligible visual regions concurrently in layout order."""
+    regions = [
+        pdf_module.VisualRegion(
+            "chart_1",
+            "line_chart",
+            "Chart 1",
+            [0.1, 0.1, 0.4, 0.4],
+            "",
+            True,
+            0.9,
+        ),
+        pdf_module.VisualRegion(
+            "legend_1",
+            "legend",
+            "Legend",
+            [0.4, 0.1, 0.5, 0.4],
+            "",
+            True,
+            0.9,
+        ),
+        pdf_module.VisualRegion(
+            "chart_2",
+            "bar_chart",
+            "Chart 2",
+            [0.5, 0.1, 0.9, 0.4],
+            "",
+            True,
+            0.9,
+        ),
+        pdf_module.VisualRegion(
+            "text_1",
+            "text",
+            "Text",
+            [0.1, 0.5, 0.9, 0.9],
+            "",
+            False,
+            0.9,
+        ),
+    ]
+    layout = pdf_module.PageLayout("# Page", regions, "layout")
+
+    def fake_extract(
+        _llm,
+        _img_bytes,
+        _prompt,
+        _layout,
+        region,
+        _context,
+    ):
+        return f"content-{region.region_id}"
+
+    monkeypatch.setattr(pdf_module, "get_extraction_region_workers", lambda: 2)
+    monkeypatch.setattr(pdf_module, "_extract_visual_region", fake_extract)
+
+    results = getattr(pdf_module, "_extract_visual_regions")(
+        Mock(),
+        b"img",
+        _mock_region_prompt(),
+        layout,
+        "doc page 1",
+    )
+
+    assert [(region.region_id, content) for region, content in results] == [
+        ("chart_1", "content-chart_1"),
+        ("chart_2", "content-chart_2"),
+    ]
 
 
 def test_parse_extraction_response_rejects_invalid_payload():
@@ -442,19 +578,21 @@ def test_extract_page_raises_when_retry_loop_never_runs(monkeypatch):
 def test_extract_single_page_wraps_content():
     """Return a PageResult for one rendered page."""
     llm = Mock()
-    prompt = _mock_prompt()
+    layout_prompt = _mock_layout_prompt()
+    region_prompt = _mock_region_prompt()
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
             pdf_module,
-            "extract_page",
+            "extract_region_aware_page",
             Mock(return_value="content"),
         )
         result = getattr(pdf_module, "_extract_single_page")(
             llm=llm,
             rendered_page=pdf_module.RenderedPage(2, b"img"),
             total_pages=4,
-            prompt=prompt,
+            layout_prompt=layout_prompt,
+            region_prompt=region_prompt,
             file_label="doc.pdf",
         )
 
@@ -493,9 +631,17 @@ def test_process_pdf_extracts_pages_in_document_order(monkeypatch):
     def fake_open_rendered_pdf(_path, _dpi):
         yield SimpleNamespace(total_pages=2)
 
-    def fake_extract(_llm, rendered_page, total_pages, prompt, file_label):
+    def fake_extract(
+        _llm,
+        rendered_page,
+        total_pages,
+        layout_prompt,
+        region_prompt,
+        file_label,
+    ):
         calls.append((rendered_page.page_number, total_pages, file_label))
-        assert prompt == _mock_prompt()
+        assert layout_prompt == _mock_prompt()
+        assert region_prompt == _mock_prompt()
         return PageResult(
             page_number=rendered_page.page_number,
             raw_content=f"page-{rendered_page.page_number}",

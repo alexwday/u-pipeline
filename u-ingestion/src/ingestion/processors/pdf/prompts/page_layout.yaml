@@ -1,0 +1,87 @@
+# ─── Metadata ───────────────────────────────────────────────
+stage: extraction
+version: "1.0"
+description: >
+  Extract text-only page OCR and identify visual regions that require
+  separate crop-level extraction.
+
+# ─── System Prompt ──────────────────────────────────────────
+system_prompt: >
+  You are a financial slide layout and OCR agent. Convert the rendered
+  PDF page into text-only markdown and a visual-region map. Always use
+  the provided tool.
+
+# ─── User Prompt ────────────────────────────────────────────
+user_prompt: >
+  Review the full page image and produce a text-only page skeleton plus
+  bounding boxes for non-text visual regions.
+
+  Rules:
+  1. Extract normal OCR text only: titles, section headers, subtitles,
+     bullets, captions, footnotes, page numbers, simple legends, and
+     other plain text.
+  2. Do not extract chart, graph, table, diagram, or dense-panel numeric
+     values in this pass. Those regions must be extracted from crops in
+     a later pass.
+  3. Detect every non-text visual or dense region that requires separate
+     extraction: each individual chart, graph, table, dense numeric
+     panel, dashboard panel, map, diagram, and complex legend.
+  4. Split multi-panel visuals into separate regions. For example, four
+     separate line charts on one page must become four region boxes.
+  5. Return normalized bounding boxes as [x1, y1, x2, y2] relative to
+     the full image, with coordinates between 0 and 1.
+  6. Bounding boxes should include the region title, axis labels, value
+     labels, and nearby legend if it is local to that region. If a
+     legend is shared across multiple regions, include it as text
+     context and optionally as its own visual region.
+  7. The visual_regions_json field must be a valid JSON array string.
+     Each object must contain region_id, type, label, bbox, context,
+     requires_region_extraction, and confidence.
+  8. Use snake_case region_id values that are unique within the page.
+  9. Set requires_region_extraction to true for charts, graphs, tables,
+     diagrams, and dense panels. Set it to false for simple legends that
+     are already captured as text context.
+  10. If there are no visual regions, return visual_regions_json as [].
+
+  Examples:
+  - A slide with a title, three bullets, and two line charts should put
+    the title and bullets in page_text_markdown, then return one visual
+    region for each line chart.
+  - A dense table should be returned as a visual region with
+    requires_region_extraction=true, not transcribed in this layout pass.
+
+# ─── Tool Choice ────────────────────────────────────────────
+tool_choice: required
+
+# ─── Tool Definitions ──────────────────────────────────────
+tools:
+  - type: function
+    function:
+      name: extract_page_layout
+      description: >
+        Call this tool when you have extracted the text-only page
+        skeleton and identified all visual regions requiring separate
+        extraction.
+      parameters:
+        type: object
+        properties:
+          page_text_markdown:
+            type: string
+            description: >
+              Text-only markdown for the page. Excludes chart, graph,
+              table, diagram, and dense-panel numeric values.
+          visual_regions_json:
+            type: string
+            description: >
+              JSON array string of visual region objects. Each object
+              includes region_id, type, label, bbox, context,
+              requires_region_extraction, and confidence.
+          rationale:
+            type: string
+            description: >
+              Brief note explaining how the page was segmented.
+        required:
+          - page_text_markdown
+          - visual_regions_json
+          - rationale
+        additionalProperties: false

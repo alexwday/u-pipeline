@@ -16,7 +16,7 @@ from ...utils.config_setup import (
 )
 from ...utils.file_types import ExtractionResult
 from ...utils.llm_connector import LLMClient
-from ...utils.llm_retry import call_with_retry
+from ...utils.llm_retry import RetryConfig, call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 
@@ -251,10 +251,12 @@ def summarize_document(
         messages,
         prompt,
         parser=_parse_doc_summary_response,
-        stage="doc_summary",
-        context=f"doc_summary:{Path(result.file_path).name}",
-        max_retries=get_doc_summary_max_retries(),
-        retry_delay=get_doc_summary_retry_delay(),
+        config=RetryConfig(
+            stage="doc_summary",
+            context=f"doc_summary:{Path(result.file_path).name}",
+            max_retries=get_doc_summary_max_retries(),
+            retry_delay=get_doc_summary_retry_delay(),
+        ),
     )
     _update_metadata(result, summary_data)
 

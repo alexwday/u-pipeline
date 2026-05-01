@@ -519,6 +519,28 @@ def _segment_section_text(
     return "\n".join(sec_lines)
 
 
+def _build_sheet_passthrough_text(
+    parsed: dict[str, Any],
+    sheet_pt_indices: list[int],
+) -> str:
+    """Build sheet passthrough text for every generated chunk."""
+    sheet_pt_lines = _collect_sheet_pt_lines(
+        parsed["data_rows"],
+        sheet_pt_indices,
+    )
+    header_prefix = "\n".join(
+        part
+        for part in (
+            parsed.get("table_header", ""),
+            parsed.get("separator", ""),
+        )
+        if part
+    )
+    if header_prefix and sheet_pt_lines:
+        sheet_pt_lines = [header_prefix] + sheet_pt_lines
+    return "\n".join(sheet_pt_lines)
+
+
 def _assemble_xlsx_chunks(
     parsed: dict[str, Any],
     breakpoints: list[int],
@@ -549,22 +571,12 @@ def _assemble_xlsx_chunks(
         '1.1'
     """
     data_rows = parsed["data_rows"]
-    sheet_pt_lines = _collect_sheet_pt_lines(data_rows, sheet_pt_indices)
     row_lookup = dict(data_rows)
 
     prefix = _build_chunk_prefix(parsed)
     segments = _split_into_segments(data_rows, breakpoints)
     chunk_prefix = _chunk_id_prefix(page)
-    table_header = parsed.get("table_header", "")
-    separator = parsed.get("separator", "")
-    header_parts = [p for p in (table_header, separator) if p]
-    header_prefix = "\n".join(header_parts)
-    pt_lines_with_header = (
-        [header_prefix] + sheet_pt_lines
-        if header_prefix and sheet_pt_lines
-        else sheet_pt_lines
-    )
-    sheet_pt_text = "\n".join(pt_lines_with_header)
+    sheet_pt_text = _build_sheet_passthrough_text(parsed, sheet_pt_indices)
 
     chunks: list[PageResult] = []
     for idx, segment in enumerate(segments):

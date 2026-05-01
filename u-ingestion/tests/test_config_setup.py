@@ -158,6 +158,11 @@ def test_other_config_helpers(monkeypatch):
         "user": "tester",
         "password": "secret",
     }
+    monkeypatch.setenv("DB_SSLMODE", "require")
+    monkeypatch.setenv("DB_SSLROOTCERT", "/path/root.pem")
+    db_config = config_setup.get_database_config()
+    assert db_config["sslmode"] == "require"
+    assert db_config["sslrootcert"] == "/path/root.pem"
     assert config_setup.get_database_schema() == "u_pipeline"
     assert config_setup.get_document_cache_root() == (
         config_setup.PROJECT_ROOT / "document-cache"
@@ -215,6 +220,13 @@ def test_numeric_worker_and_rendering_config_validates_bounds(monkeypatch):
         match="EXTRACTION_PAGE_WORKERS must be >= 1",
     ):
         config_setup.get_extraction_page_workers()
+
+    monkeypatch.setenv("EXTRACTION_REGION_WORKERS", "0")
+    with pytest.raises(
+        ValueError,
+        match="EXTRACTION_REGION_WORKERS must be >= 1",
+    ):
+        config_setup.get_extraction_region_workers()
 
     monkeypatch.setenv("VISION_DPI_SCALE", "fast")
     with pytest.raises(ValueError, match="VISION_DPI_SCALE must be a number"):
@@ -431,6 +443,10 @@ def test_env_example_matches_live_config_surface():
         "DB_USER",
         "DB_PASSWORD",
         "DB_SCHEMA",
+        "DB_SSLMODE",
+        "DB_SSLROOTCERT",
+        "DB_SSLCERT",
+        "DB_SSLKEY",
         "DATA_SOURCE_PATH",
         "RETENTION_COUNT",
         "ACCEPTED_FILETYPES",
@@ -438,6 +454,7 @@ def test_env_example_matches_live_config_surface():
         "NON_CURRENT_VERSION_RETENTION_COUNT",
         "MAX_WORKERS",
         "EXTRACTION_PAGE_WORKERS",
+        "EXTRACTION_REGION_WORKERS",
         "VISION_DPI_SCALE",
         "PDF_VISION_MAX_RETRIES",
         "PDF_VISION_RETRY_DELAY_SECONDS",

@@ -2,6 +2,7 @@
 
 import logging
 import time
+from threading import Lock
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -61,6 +62,7 @@ class OAuthClient:
         self.verify_ssl = verify_ssl
         self._access_token = ""
         self._expires_at = 0.0
+        self._refresh_lock = Lock()
 
     def get_token(self) -> str:
         """Get a valid access token, refreshing if needed.
@@ -76,7 +78,9 @@ class OAuthClient:
             "eyJhbGciOi..."
         """
         if self.is_expired():
-            self._fetch_token()
+            with self._refresh_lock:
+                if self.is_expired():
+                    self._fetch_token()
         return self._access_token
 
     def is_expired(self) -> bool:

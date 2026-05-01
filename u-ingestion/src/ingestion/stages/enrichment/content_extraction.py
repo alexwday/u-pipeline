@@ -18,7 +18,7 @@ from ...utils.config_setup import (
 )
 from ...utils.file_types import ExtractionResult, get_content_unit_id
 from ...utils.llm_connector import LLMClient
-from ...utils.llm_retry import call_with_retry
+from ...utils.llm_retry import RetryConfig, call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.source_context import get_result_source_context
@@ -442,12 +442,16 @@ def extract_content(
             messages,
             prompt,
             parser=_parse_extraction_response,
-            stage="content_extraction",
-            context=batch_context,
-            max_retries=get_content_extraction_max_retries(),
-            retry_delay=get_content_extraction_retry_delay(),
-            validator=lambda parsed, _batch=batch: _validate_batch_results(
-                _batch, parsed
+            config=RetryConfig(
+                stage="content_extraction",
+                context=batch_context,
+                max_retries=get_content_extraction_max_retries(),
+                retry_delay=get_content_extraction_retry_delay(),
+                validator=(
+                    lambda parsed, _batch=batch: _validate_batch_results(
+                        _batch, parsed
+                    )
+                ),
             ),
         )
         all_extractions.update(batch_results)

@@ -17,7 +17,7 @@ from ...utils.config_setup import (
 )
 from ...utils.file_types import ExtractionResult
 from ...utils.llm_connector import LLMClient
-from ...utils.llm_retry import call_with_retry
+from ...utils.llm_retry import RetryConfig, call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.source_context import get_result_source_context
@@ -369,10 +369,12 @@ def enrich_doc_metadata(
         messages,
         prompt,
         parser=_parse_metadata_response,
-        stage="doc_metadata",
-        context=f"doc_metadata:{Path(result.file_path).name}",
-        max_retries=get_doc_metadata_max_retries(),
-        retry_delay=get_doc_metadata_retry_delay(),
+        config=RetryConfig(
+            stage="doc_metadata",
+            context=f"doc_metadata:{Path(result.file_path).name}",
+            max_retries=get_doc_metadata_max_retries(),
+            retry_delay=get_doc_metadata_retry_delay(),
+        ),
     )
     source_context = get_result_source_context(result)
 

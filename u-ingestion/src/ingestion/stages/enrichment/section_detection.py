@@ -25,7 +25,7 @@ from ...utils.file_types import (
     get_content_unit_id,
 )
 from ...utils.llm_connector import LLMClient
-from ...utils.llm_retry import call_with_retry
+from ...utils.llm_retry import RetryConfig, call_with_retry
 from ...utils.logging_setup import get_stage_logger
 from ...utils.prompt_loader import load_prompt
 from ...utils.token_counting import count_message_tokens
@@ -423,10 +423,12 @@ def _call_section_llm(
         messages,
         prompt,
         parser=_parse_section_response,
-        stage="section_detection",
-        context=f"section_detection:{Path(result.file_path).name}",
-        max_retries=get_section_detection_max_retries(),
-        retry_delay=get_section_detection_retry_delay(),
+        config=RetryConfig(
+            stage="section_detection",
+            context=f"section_detection:{Path(result.file_path).name}",
+            max_retries=get_section_detection_max_retries(),
+            retry_delay=get_section_detection_retry_delay(),
+        ),
     )
 
 
@@ -663,14 +665,16 @@ def _detect_llm_subsections(
         messages,
         prompt,
         parser=_parse_section_response,
-        stage="section_detection",
-        context=(
-            f"subsection_detection:"
-            f"{Path(result.file_path).name}:"
-            f"{section.title}"
+        config=RetryConfig(
+            stage="section_detection",
+            context=(
+                f"subsection_detection:"
+                f"{Path(result.file_path).name}:"
+                f"{section.title}"
+            ),
+            max_retries=get_section_detection_max_retries(),
+            retry_delay=get_section_detection_retry_delay(),
         ),
-        max_retries=get_section_detection_max_retries(),
-        retry_delay=get_section_detection_retry_delay(),
     )
     if not raw_subs:
         return []

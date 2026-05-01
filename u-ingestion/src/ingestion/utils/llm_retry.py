@@ -10,6 +10,7 @@ propagate immediately.
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
 import openai
@@ -29,17 +30,23 @@ RETRYABLE_ERRORS = (
 T = TypeVar("T")
 
 
+@dataclass(frozen=True)
+class RetryConfig:
+    """Runtime retry settings for one LLM tool call."""
+
+    stage: str
+    context: str
+    max_retries: int
+    retry_delay: float
+    validator: Callable[[Any], None] | None = None
+
+
 def call_with_retry(
     llm: LLMClient,
     messages: list,
     prompt: dict[str, Any],
     parser: Callable[[dict], T],
-    *,
-    stage: str,
-    context: str,
-    max_retries: int,
-    retry_delay: float,
-    validator: Callable[[T], None] | None = None,
+    config: RetryConfig,
 ) -> T:
     """Call the LLM, parse the response, and retry on transient errors.
 
@@ -55,12 +62,7 @@ def call_with_retry(
         messages: Message list for the API call
         prompt: Loaded prompt dict with tools and tool_choice
         parser: Callable that parses the raw response dict into type T
-        stage: Pipeline stage name for model config lookup
-        context: Log label for the request (":attempt_N" is appended)
-        max_retries: Maximum number of attempts (1 means no retry)
-        retry_delay: Base backoff delay in seconds (scales linearly)
-        validator: Optional callable that validates the parsed result
-            and raises ValueError when the batch is inconsistent
+        config: Stage, logging, retry, and optional validation settings
 
     Returns:
         T -- the parsed (and optionally validated) response
@@ -71,42 +73,46 @@ def call_with_retry(
         ...     messages,
         ...     prompt,
         ...     parser=_parse_metadata_response,
-        ...     stage="doc_metadata",
-        ...     context="doc_metadata:doc.pdf",
-        ...     max_retries=3,
-        ...     retry_delay=2.0,
+        ...     config=RetryConfig(
+        ...         stage="doc_metadata",
+        ...         context="doc_metadata:doc.pdf",
+        ...         max_retries=3,
+        ...         retry_delay=2.0,
+        ...     ),
         ... )
     """
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, config.max_retries + 1):
         try:
             response = llm.call(
                 messages=messages,
-                stage=stage,
+                stage=config.stage,
                 tools=prompt.get("tools"),
                 tool_choice=prompt.get("tool_choice"),
-                context=f"{context}:attempt_{attempt}",
+                context=f"{config.context}:attempt_{attempt}",
             )
             parsed = parser(response)
-            if validator is not None:
-                validator(parsed)
+            if config.validator is not None:
+                config.validator(parsed)
             return parsed
         except RETRYABLE_ERRORS as exc:
-            if attempt == max_retries:
+            if attempt == config.max_retries:
                 logger.error(
                     "%s failed after %d retries: %s",
-                    context,
-                    max_retries,
+                    config.context,
+                    config.max_retries,
                     exc,
                 )
                 raise
-            wait = retry_delay * attempt
+            wait = config.retry_delay * attempt
             logger.warning(
                 "%s retry %d/%d after %.1fs: %s",
-                context,
+                config.context,
                 attempt,
-                max_retries,
+                config.max_retries,
                 wait,
                 exc,
             )
             time.sleep(wait)
-    raise RuntimeError(f"{context} exited retry loop without a response")
+    raise RuntimeError(
+        f"{config.context} exited retry loop without a response"
+    )

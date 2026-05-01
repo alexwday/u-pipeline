@@ -116,6 +116,11 @@ def test_database_config_and_schema(monkeypatch):
         "user": "tester",
         "password": "secret",
     }
+    monkeypatch.setenv("DB_SSLMODE", "require")
+    monkeypatch.setenv("DB_SSLROOTCERT", "/path/root.pem")
+    db_config = config_setup.get_database_config()
+    assert db_config["sslmode"] == "require"
+    assert db_config["sslrootcert"] == "/path/root.pem"
     assert config_setup.get_database_schema() == "u_pipeline"
 
     monkeypatch.delenv("DB_SCHEMA")
@@ -340,6 +345,10 @@ def test_env_example_matches_live_config_surface():
         "DB_USER",
         "DB_PASSWORD",
         "DB_SCHEMA",
+        "DB_SSLMODE",
+        "DB_SSLROOTCERT",
+        "DB_SSLCERT",
+        "DB_SSLKEY",
         "EMBEDDING_MODEL",
         "EMBEDDING_DIMENSIONS",
         "SEARCH_TOP_K",
