@@ -1,5 +1,6 @@
 """Tests for configuration helpers."""
 
+import os
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -13,10 +14,25 @@ def test_load_config_calls_load_dotenv(monkeypatch):
     """Delegate .env loading to python-dotenv."""
     load_dotenv = Mock()
     monkeypatch.setattr(config_setup, "load_dotenv", load_dotenv)
+    monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
 
     config_setup.load_config()
 
     load_dotenv.assert_called_once_with(config_setup.ENV_PATH)
+    assert os.environ["TIKTOKEN_CACHE_DIR"] == str(
+        config_setup.TOKENIZER_CACHE_PATH
+    )
+
+
+def test_load_config_preserves_explicit_tiktoken_cache(monkeypatch):
+    """Do not override an explicitly configured tokenizer cache."""
+    load_dotenv = Mock()
+    monkeypatch.setattr(config_setup, "load_dotenv", load_dotenv)
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "/custom/tiktoken-cache")
+
+    config_setup.load_config()
+
+    assert os.environ["TIKTOKEN_CACHE_DIR"] == "/custom/tiktoken-cache"
 
 
 def test_require_env_and_auth_mode(monkeypatch):

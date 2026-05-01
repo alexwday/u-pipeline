@@ -7,13 +7,16 @@ from dotenv import load_dotenv
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent.parent / ".env"
 PROJECT_ROOT = ENV_PATH.parent
+TOKENIZER_CACHE_PATH = PROJECT_ROOT / "tokenizer-cache"
 
 
 def load_config() -> None:
     """Load .env file into process environment.
 
     Safe to call multiple times — load_dotenv does not
-    overwrite existing env vars by default.
+    overwrite existing env vars by default. Also points
+    tiktoken at the bundled tokenizer cache when no cache
+    directory has already been configured.
 
     Params:
         None
@@ -25,6 +28,8 @@ def load_config() -> None:
         >>> load_config()
     """
     load_dotenv(ENV_PATH)
+    if not os.getenv("TIKTOKEN_CACHE_DIR"):
+        os.environ["TIKTOKEN_CACHE_DIR"] = str(TOKENIZER_CACHE_PATH)
 
 
 def _require_env(name: str) -> str:

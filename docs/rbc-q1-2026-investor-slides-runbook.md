@@ -61,6 +61,7 @@ DB_USER=<database user>
 DB_PASSWORD=<database password>
 DB_SCHEMA=u_pipeline
 DB_SSLMODE=require
+TOKENIZER_MODEL=o200k_base
 ```
 
 If RBC provides explicit database certificate files, also set:
@@ -70,6 +71,12 @@ DB_SSLROOTCERT=<path to root cert>
 DB_SSLCERT=<path to client cert>
 DB_SSLKEY=<path to client key>
 ```
+
+`TOKENIZER_MODEL` is only for local token counting and chunk sizing.
+It does not control the embedding model. The `o200k_base` tiktoken
+cache is bundled in `u-ingestion/tokenizer-cache/` and configured by
+ingestion startup, so token counting should not need to download the
+encoding file.
 
 Recommended ingestion concurrency for the first RBC run:
 
