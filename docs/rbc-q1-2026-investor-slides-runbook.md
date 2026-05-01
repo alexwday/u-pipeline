@@ -14,15 +14,36 @@ git checkout main
 git pull origin main
 ```
 
+Create the repo-local virtual environment if it does not already exist:
+
+```bash
+cd /path/to/u-pipeline
+python3.12 -m venv .venv
+```
+
+If `python3.12` is not available on the work computer, use the RBC
+approved Python 3.12+ executable instead.
+
 Install the local packages into the shared virtual environment:
 
 ```bash
+cd /path/to/u-pipeline
 .venv/bin/python -m pip install -e u-ingestion -e u-retriever
 ```
 
 ## 2. Configure RBC Environment
 
-Edit `u-ingestion/.env` and `u-retriever/.env` with the RBC values.
+The `.env` files are intentionally not committed because they contain
+secrets. If this is the first setup on the work computer, create them
+from the examples:
+
+```bash
+cd /path/to/u-pipeline
+cp u-ingestion/.env.example u-ingestion/.env
+cp u-retriever/.env.example u-retriever/.env
+```
+
+Then edit `u-ingestion/.env` and `u-retriever/.env` with the RBC values.
 At minimum, confirm these are set:
 
 ```bash
@@ -87,19 +108,69 @@ Warning: this deletes the pipeline catalog, document versions, stage
 checkpoints, extracted content, embeddings, summaries, and metadata in
 the configured `DB_SCHEMA`.
 
-Run from `u-ingestion`:
+Run from `u-ingestion`. This uses Python to load `.env`, so the file
+does not need to be valid shell syntax:
 
 ```bash
 cd /path/to/u-pipeline/u-ingestion
-set -a
-source .env
-set +a
 
-PGPASSWORD="$DB_PASSWORD" PGSSLMODE="${DB_SSLMODE:-prefer}" \
-PGSSLROOTCERT="$DB_SSLROOTCERT" PGSSLCERT="$DB_SSLCERT" PGSSLKEY="$DB_SSLKEY" \
-psql -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -U "$DB_USER" \
-  -v schema="$DB_SCHEMA" \
-  -c 'TRUNCATE TABLE :"schema".document_catalog, :"schema".document_versions RESTART IDENTITY CASCADE;'
+../.venv/bin/python - <<'PY'
+import os
+from pathlib import Path
+
+import psycopg2
+from dotenv import load_dotenv
+from psycopg2 import sql
+
+env_path = Path(".env")
+if not env_path.exists():
+    raise SystemExit(
+        "Missing u-ingestion/.env. Run this from u-ingestion or create "
+        "the .env file first."
+    )
+
+load_dotenv(env_path)
+
+required = [
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USER",
+    "DB_SCHEMA",
+]
+missing = [name for name in required if not os.getenv(name)]
+if missing:
+    raise SystemExit(f"Missing required env values: {', '.join(missing)}")
+
+conn_kwargs = {
+    "host": os.environ["DB_HOST"],
+    "port": os.environ["DB_PORT"],
+    "dbname": os.environ["DB_NAME"],
+    "user": os.environ["DB_USER"],
+    "password": os.getenv("DB_PASSWORD", ""),
+}
+for env_name, conn_key in (
+    ("DB_SSLMODE", "sslmode"),
+    ("DB_SSLROOTCERT", "sslrootcert"),
+    ("DB_SSLCERT", "sslcert"),
+    ("DB_SSLKEY", "sslkey"),
+):
+    value = os.getenv(env_name, "")
+    if value:
+        conn_kwargs[conn_key] = value
+
+schema = os.environ["DB_SCHEMA"]
+statement = sql.SQL(
+    "TRUNCATE TABLE {}.document_catalog, {}.document_versions "
+    "RESTART IDENTITY CASCADE;"
+).format(sql.Identifier(schema), sql.Identifier(schema))
+
+with psycopg2.connect(**conn_kwargs) as conn:
+    with conn.cursor() as cur:
+        cur.execute(statement)
+
+print(f"Wiped pipeline tables in schema {schema}")
+PY
 ```
 
 ## 5. Reprocess Q1 2026 Investor Slides Only
