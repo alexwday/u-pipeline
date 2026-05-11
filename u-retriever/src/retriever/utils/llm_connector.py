@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import Generator
 from copy import deepcopy
+from threading import Lock
 from typing import Any
 
 from openai import OpenAI
@@ -75,7 +76,10 @@ class LLMClient:
         self.auth_mode = get_auth_mode()
         self.endpoint = get_llm_endpoint()
         self.oauth_client = None
+        self.oauth_openai_client = None
+        self.oauth_token = ""
         self.static_client = None
+        self._client_lock = Lock()
 
         if self.auth_mode == "oauth":
             oauth_cfg = get_oauth_config()
@@ -105,10 +109,18 @@ class LLMClient:
         if self.static_client:
             return self.static_client
         token = self.oauth_client.get_token()
-        return OpenAI(
-            api_key=token,
-            base_url=self.endpoint,
-        )
+        with self._client_lock:
+            if (
+                self.oauth_openai_client is not None
+                and self.oauth_token == token
+            ):
+                return self.oauth_openai_client
+            self.oauth_openai_client = OpenAI(
+                api_key=token,
+                base_url=self.endpoint,
+            )
+            self.oauth_token = token
+            return self.oauth_openai_client
 
     def call(
         self,

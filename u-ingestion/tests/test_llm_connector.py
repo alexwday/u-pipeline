@@ -49,6 +49,25 @@ def make_oauth_client(config):
     return SimpleNamespace(config=config, get_token=get_token)
 
 
+def make_rotating_oauth_client(tokens):
+    """Return an OAuth client that yields a configured token sequence."""
+
+    def create_client(config):
+        token_iter = iter(tokens)
+        state = {"current": tokens[-1]}
+
+        def get_token():
+            try:
+                state["current"] = next(token_iter)
+            except StopIteration:
+                pass
+            return state["current"]
+
+        return SimpleNamespace(config=config, get_token=get_token)
+
+    return create_client
+
+
 def test_llm_client_api_key_mode(monkeypatch):
     """Use a static OpenAI client for API-key auth."""
     created_clients = []
@@ -102,7 +121,7 @@ def test_llm_client_api_key_mode(monkeypatch):
 
 
 def test_llm_client_oauth_mode(monkeypatch):
-    """Create a fresh OpenAI client with the OAuth token."""
+    """Reuse one OpenAI client while the OAuth token is unchanged."""
     created_clients = []
     monkeypatch.setattr(
         llm_connector,
@@ -142,11 +161,58 @@ def test_llm_client_oauth_mode(monkeypatch):
     client.call(messages=[{"role": "user", "content": "hello"}])
 
     request = created_clients[-1].requests[0]
+    assert client.get_client() is returned_client
+    assert len(created_clients) == 1
     assert returned_client.api_key == "oauth-token"
     assert "temperature" not in request
     assert "reasoning_effort" not in request
     assert "tools" not in request
     assert "tool_choice" not in request
+
+
+def test_llm_client_oauth_mode_refreshes_client_when_token_changes(
+    monkeypatch,
+):
+    """Build a new OpenAI client only when OAuth returns a new token."""
+    created_clients = []
+    monkeypatch.setattr(
+        llm_connector,
+        "OpenAI",
+        make_openai_factory(created_clients),
+    )
+    monkeypatch.setattr(
+        llm_connector,
+        "OAuthClient",
+        make_rotating_oauth_client(["token-1", "token-1", "token-2"]),
+    )
+    monkeypatch.setattr(llm_connector, "get_auth_mode", lambda: "oauth")
+    monkeypatch.setattr(
+        llm_connector,
+        "get_oauth_config",
+        lambda: {
+            "token_endpoint": "https://auth.example.com/token",
+            "client_id": "id",
+            "client_secret": "secret",
+            "scope": "",
+        },
+    )
+    monkeypatch.setattr(
+        llm_connector,
+        "get_llm_endpoint",
+        lambda: "https://api.example.com/v1",
+    )
+
+    client = llm_connector.LLMClient()
+    first = client.get_client()
+    second = client.get_client()
+    third = client.get_client()
+
+    assert first is second
+    assert third is not first
+    assert [created.api_key for created in created_clients] == [
+        "token-1",
+        "token-2",
+    ]
 
 
 def test_test_connection_success(monkeypatch):

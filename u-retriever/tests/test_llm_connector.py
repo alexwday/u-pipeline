@@ -1,5 +1,6 @@
 """Tests for LLM connector streaming and content extraction."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,6 +55,44 @@ def _build_mock_llm_client(chunks):
 
             client = LLMClient()
             return client, mock_openai
+
+
+def test_oauth_get_client_reuses_client_until_token_changes():
+    """OAuth mode reuses the OpenAI client while the token is stable."""
+    created_clients = []
+
+    def create_openai(api_key, base_url):
+        client = SimpleNamespace(api_key=api_key, base_url=base_url)
+        created_clients.append(client)
+        return client
+
+    token_state = {"index": 0}
+    tokens = ["token-1", "token-1", "token-2"]
+
+    def get_token():
+        token = tokens[token_state["index"]]
+        token_state["index"] = min(token_state["index"] + 1, len(tokens) - 1)
+        return token
+
+    oauth_client = SimpleNamespace(get_token=get_token)
+    with (
+        patch(f"{_MOD}.get_auth_mode", return_value="oauth"),
+        patch(f"{_MOD}.get_oauth_config", return_value={}),
+        patch(f"{_MOD}.get_llm_endpoint", return_value="http://test"),
+        patch(f"{_MOD}.OAuthClient", return_value=oauth_client),
+        patch(f"{_MOD}.OpenAI", side_effect=create_openai),
+    ):
+        client = LLMClient()
+        first = client.get_client()
+        second = client.get_client()
+        third = client.get_client()
+
+    assert first is second
+    assert third is not first
+    assert [created.api_key for created in created_clients] == [
+        "token-1",
+        "token-2",
+    ]
 
 
 def test_stream_yields_text_chunks():
